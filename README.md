@@ -1,9 +1,17 @@
-# scrub
+# cVAR
 
 Scrub a git branch the way you scrub a video timeline. Built for reviewing what
 a coding agent did to a repo, one small commit at a time.
 
+Agents produce plausible code faster than anyone can read it — internally
+consistent, well formatted, and occasionally wrong in ways a diff hides. cVAR
+is the review room: step through a branch commit by commit, see which files
+churned and when, and hand any frame to your editor to actually read.
+
+The command is `scrub`, because that is the verb.
+
 Stdlib-only Python, no dependencies. Backend is git's plumbing layer.
+MIT licensed.
 
 ## Model
 

@@ -3,10 +3,12 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "var-scrub"
+name = "cvar"
 version = "0.1.0"
-description = "Scrub a git branch the way you scrub a video timeline."
+description = "cVAR — scrub a git branch the way you scrub a video timeline."
 readme = "README.md"
+license = "MIT"
+authors = [{ name = "Rohan Hejmadi" }]
 requires-python = ">=3.10"
 # Deliberately none. Everything runs on the standard library and git's own
 # plumbing, so the tool installs anywhere git and Python already work.
