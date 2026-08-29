@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "var-scrub"
+version = "0.1.0"
+description = "Scrub a git branch the way you scrub a video timeline."
+readme = "README.md"
+requires-python = ">=3.10"
+# Deliberately none. Everything runs on the standard library and git's own
+# plumbing, so the tool installs anywhere git and Python already work.
+dependencies = []
+
+[project.scripts]
+scrub = "scrub.cli:main"
+
+[tool.setuptools]
+packages = ["scrub"]
+
+[tool.setuptools.package-data]
+scrub = ["*.lua"]
