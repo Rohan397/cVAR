@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from . import gitio
+from . import gitio, glyphs
 
 # @@ -old_start,old_count +new_start,new_count @@ ; either count may be omitted,
 # which means exactly one line.
@@ -60,7 +60,7 @@ class Chunk:
 
     @property
     def label(self) -> str:
-        return f"L{self.start}–{self.end}"
+        return f"L{self.start}{glyphs.active().dash}{self.end}"
 
     @property
     def weight(self) -> int:

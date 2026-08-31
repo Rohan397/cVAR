@@ -12,7 +12,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import doctor, render, tui
+from . import doctor, glyphs, render, tui
 from .tui import PANES
 from .gitio import GitError
 from .model import Timeline
@@ -48,12 +48,19 @@ def main(argv: list[str] | None = None) -> int:
         choices=PANES,
         default=os.environ.get("SCRUB_PANE", "unified"),
         help=(
-            "what ⏎ opens (default: unified, or $SCRUB_PANE). "
+            "what enter opens (default: unified, or $SCRUB_PANE). "
             "d/s/c still open each pane explicitly."
         ),
     )
+    parser.add_argument(
+        "--ascii",
+        action="store_true",
+        help="draw with plain ASCII, for fonts missing the block glyphs",
+    )
     parser.add_argument("--no-color", action="store_true")
     args = parser.parse_args(argv)
+    if args.ascii:
+        glyphs.use_ascii()
 
     try:
         timeline = Timeline.load(args.repo, args.rev_range, args.limit)

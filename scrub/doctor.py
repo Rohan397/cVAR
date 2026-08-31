@@ -81,7 +81,7 @@ def report(timeline: Timeline, editor: str | None, server: str | None) -> str:
 
 def _advice(made: EditorBridge, repo: Path) -> str:
     if made.mode == "remote":
-        return "Ready: press ⏎ and the diff opens in the other pane."
+        return "Ready: press enter and the diff opens in the other pane."
     if made.mode == "suspend":
         return (
             "The diff will open in THIS pane, not the other one.\n"

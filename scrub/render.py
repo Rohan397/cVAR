@@ -9,13 +9,11 @@ from __future__ import annotations
 
 import math
 
+from . import glyphs
 from .model import Timeline, Track
 
 # Magnitude ramp for changed cells. Index 0 is the lightest touch.
-RAMP = "░▒▓█"
-UNCHANGED = "·"  # file exists at this commit but was not touched
-ABSENT = " "  # file does not exist yet, or has been deleted
-DELETED = "×"
+RAMP_STEPS = 4  # file exists at this commit but was not touched
 
 DIM = "\x1b[2m"
 BOLD = "\x1b[1m"
@@ -29,25 +27,28 @@ def _bucket(weight: int, ceiling: int) -> str:
     the same shade, which is precisely the branch shape worth seeing.
     """
     if weight <= 0:
-        return RAMP[0]
+        return glyphs.active().ramp[0]
     scaled = math.log1p(weight) / math.log1p(max(ceiling, 1))
-    return RAMP[min(len(RAMP) - 1, int(scaled * len(RAMP)))]
+    ramp = glyphs.active().ramp
+    return ramp[min(len(ramp) - 1, int(scaled * len(ramp)))]
 
 
 def track_row(track: Track, span: int, ceiling: int) -> str:
+    G = glyphs.active()
     cells = []
     for index in range(span):
         clip = track.clips.get(index)
         if clip is not None:
-            cells.append(DELETED if clip.kind == "D" else _bucket(clip.weight, ceiling))
+            cells.append(G.deleted if clip.kind == "D" else _bucket(clip.weight, ceiling))
         else:
             state = track.state_at(index)
-            cells.append(UNCHANGED if state == "live" else ABSENT)
+            cells.append(G.unchanged if state == "live" else G.absent)
     return "".join(cells)
 
 
 def grid(timeline: Timeline, playhead: int = 0, width: int = 34, color: bool = True) -> str:
     """The full track view: files down the side, commits across."""
+    G = glyphs.active()
     span = len(timeline)
     if span == 0:
         return "(no commits in range)"
@@ -61,19 +62,19 @@ def grid(timeline: Timeline, playhead: int = 0, width: int = 34, color: bool = T
     lines: list[str] = []
 
     # Playhead marker sits above the grid, aligned to the commit columns.
-    caret = " " * width + " " + " " * playhead + "▼"
+    caret = " " * width + " " + " " * playhead + G.caret
     lines.append(paint(caret, BOLD))
 
     for track in tracks:
         label = track.label
         if len(label) > width:
-            label = "…" + label[-(width - 1) :]
+            label = G.ellipsis + label[-(width - 1) :]
         row = track_row(track, span, ceiling)
         marked = row[:playhead] + paint(row[playhead : playhead + 1], BOLD) + row[playhead + 1 :]
         lines.append(f"{label:<{width}} {marked}")
 
     # Commit ruler: a tick every five commits so position stays readable.
-    ruler = "".join("┼" if i % 5 == 0 else "─" for i in range(span))
+    ruler = "".join(G.tick if i % 5 == 0 else G.rule for i in range(span))
     lines.append(paint(" " * width + " " + ruler, DIM))
 
     head = timeline.commits[playhead]

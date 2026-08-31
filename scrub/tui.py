@@ -18,13 +18,11 @@ import locale
 import math
 
 from . import chunks as chunkmod
+from . import glyphs
 from .bridge import EditorBridge
 from .model import Timeline, Track
 
-RAMP = "░▒▓█"
-UNCHANGED = "·"
-ABSENT = " "
-DELETED = "×"
+RAMP_STEPS = 4  # the ramp is always four buckets, whichever set is in force
 
 PANES = ("unified", "diff", "state", "cumulative")
 
@@ -56,7 +54,7 @@ class ScrubApp:
     ) -> None:
         self.timeline = timeline
         self.bridge = bridge
-        # What ⏎ opens. Every pane keeps its own key regardless, so changing
+        # What enter opens. Every pane keeps its own key regardless, so changing
         # this rebinds the default without taking any view away.
         self.default_pane = default_pane if default_pane in PANES else "unified"
         # Zoom: rows become regions of one file instead of one row per file.
@@ -151,21 +149,22 @@ class ScrubApp:
     def chunk_cell(self, chunk: chunkmod.Chunk, index: int) -> tuple[str, int]:
         weight = chunk.weight_by_commit.get(index)
         if weight is not None:
-            return RAMP[_bucket(weight, self.ceiling)], ST_RAMP + _bucket(weight, self.ceiling)
+            step = _bucket(weight, self.ceiling)
+            return glyphs.active().ramp[step], ST_RAMP + step
         if self.selected.state_at(index) == "live":
-            return UNCHANGED, ST_QUIET
-        return ABSENT, ST_ABSENT
+            return glyphs.active().unchanged, ST_QUIET
+        return glyphs.active().absent, ST_ABSENT
 
     def cell(self, track: Track, index: int) -> tuple[str, int]:
         clip = track.clips.get(index)
         if clip is not None:
             if clip.kind == "D":
-                return DELETED, ST_DELETED
+                return glyphs.active().deleted, ST_DELETED
             step = _bucket(clip.weight, self.ceiling)
-            return RAMP[step], ST_RAMP + step
+            return glyphs.active().ramp[step], ST_RAMP + step
         if track.state_at(index) == "live":
-            return UNCHANGED, ST_QUIET
-        return ABSENT, ST_ABSENT
+            return glyphs.active().unchanged, ST_QUIET
+        return glyphs.active().absent, ST_ABSENT
 
     # -- layout ----------------------------------------------------------
 
@@ -258,20 +257,22 @@ class ScrubApp:
         curses.doupdate()
 
     def _draw_ruler(self, stdscr, row: int, label_w: int, spans: dict[int, tuple[int, int]]) -> None:
+        G = glyphs.active()
         attr = STYLE_ATTR.get(ST_ABSENT, 0)
         for index, (x0, x1) in spans.items():
             width = x1 - x0
-            mark = "┼" if width > 1 or index % 5 == 0 else "─"
-            _put(stdscr, row, label_w + 1 + x0, mark + "─" * (width - 1), width, attr)
+            mark = G.tick if width > 1 or index % 5 == 0 else G.rule
+            _put(stdscr, row, label_w + 1 + x0, mark + G.rule * (width - 1), width, attr)
 
         # The caret is the only thing marking horizontal position once the
         # commit row stops being a per-commit strip.
         if self.playhead in spans:
             x0, x1 = spans[self.playhead]
             caret_x = label_w + 1 + x0 + (x1 - x0 - 1) // 2
-            _put(stdscr, row, caret_x, "▼", 1, STYLE_ATTR.get(ST_ACCENT, 0))
+            _put(stdscr, row, caret_x, G.caret, 1, STYLE_ATTR.get(ST_ACCENT, 0))
 
     def _draw_commit_row(self, stdscr, row: int, label_w: int, cols: int) -> None:
+        G = glyphs.active()
         """The bottom track: the message of the commit under the playhead.
 
         Subjects were unreadable sliced into per-commit cells, so this row gives
@@ -289,6 +290,7 @@ class ScrubApp:
         _put(stdscr, row, label_w + 1, subject, width, STYLE_ATTR.get(ST_ACCENT, 0))
 
     def _help(self) -> str:
+        G = glyphs.active()
         """The help bar names the current default, or the rebind is invisible."""
         keys = "  ".join(
             f"{key} {name}"
@@ -297,8 +299,8 @@ class ScrubApp:
             )
         )
         return (
-            "←→ commit  ↑↓ track  [ ] next change  "
-            f"⏎ {self.default_pane}  {keys}  "
+            f"{G.left}{G.right} commit  {G.up}{G.down} track  [ ] next change  "
+            f"{G.enter} {self.default_pane}  {keys}  "
             f"{'z files' if self.zoom else 'z chunks'}  f solo  q quit"
         )
 
@@ -414,12 +416,13 @@ def _bucket(weight: int, ceiling: int) -> int:
     if weight <= 0:
         return 0
     scaled = math.log1p(weight) / math.log1p(max(ceiling, 1))
-    return min(len(RAMP) - 1, int(scaled * len(RAMP)))
+    return min(RAMP_STEPS - 1, int(scaled * RAMP_STEPS))
 
 
 def _fit(text: str, width: int) -> str:
+    G = glyphs.active()
     if len(text) > width - 1:
-        text = "…" + text[-(width - 2) :]
+        text = G.ellipsis + text[-(width - 2) :]
     return f"{text:<{width}}"
 
 

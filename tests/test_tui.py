@@ -28,7 +28,7 @@ from scrub.bridge import (  # noqa: E402
 import subprocess  # noqa: E402
 
 from scrub import bridge as bridge_mod  # noqa: E402
-from scrub import chunks, doctor  # noqa: E402
+from scrub import chunks, doctor, glyphs  # noqa: E402
 from scrub.model import Timeline  # noqa: E402
 from scrub.tui import ST_DELETED, ST_RAMP, ScrubApp  # noqa: E402
 
@@ -855,8 +855,8 @@ class DefaultPaneTest(unittest.TestCase):
 
     def test_help_bar_names_the_current_default(self):
         # Rebinding ⏎ without saying so would leave the user guessing.
-        self.assertIn("⏎ state", self.app("state")._help())
-        self.assertIn("⏎ diff", self.app("diff")._help())
+        self.assertIn("enter state", self.app("state")._help())
+        self.assertIn("enter diff", self.app("diff")._help())
 
     def test_every_pane_keeps_its_own_key_regardless(self):
         help_text = self.app("state")._help()
@@ -891,6 +891,41 @@ class UnifiedDiffTest(unittest.TestCase):
 
     def test_a_line_past_the_end_does_not_crash(self):
         self.assertIsNone(bridge_mod._diff_line_for("@@ -1 +1 @@\n ctx\n", 9999))
+
+
+class GlyphTest(unittest.TestCase):
+    """Both character sets, and switching between them at runtime."""
+
+    def tearDown(self):
+        glyphs._current = glyphs.UNICODE
+
+    def test_every_cell_state_stays_distinct_in_ascii(self):
+        # If two states collapse to the same character the grid stops meaning
+        # anything, which is worse than a missing glyph.
+        a = glyphs.ASCII
+        cells = set(a.ramp) | {a.unchanged, a.absent, a.deleted}
+        self.assertEqual(len(cells), 7)
+
+    def test_both_sets_have_a_four_step_ramp(self):
+        self.assertEqual(len(glyphs.UNICODE.ramp), 4)
+        self.assertEqual(len(glyphs.ASCII.ramp), 4)
+
+    def test_ascii_set_is_pure_ascii(self):
+        for name, value in vars(glyphs.ASCII).items():
+            value.encode("ascii")  # raises if not
+
+    def test_switching_takes_effect_without_reimporting(self):
+        # --ascii is parsed after import, so a glyph bound at import time would
+        # leave the flag doing nothing at all.
+        self.assertEqual(glyphs.active().ramp, glyphs.UNICODE.ramp)
+        glyphs.use_ascii()
+        self.assertEqual(glyphs.active().ramp, glyphs.ASCII.ramp)
+
+    def test_the_enter_key_is_spelled_out_in_both(self):
+        # U+23CE is the glyph most often missing from a monospace font, and a
+        # help bar is the worst place to render a "?".
+        self.assertEqual(glyphs.UNICODE.enter, "enter")
+        self.assertEqual(glyphs.ASCII.enter, "enter")
 
 
 class ChunkTest(unittest.TestCase):
