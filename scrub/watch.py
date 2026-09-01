@@ -6,7 +6,9 @@ same question in ~12 µs, so the poll can run twice a second and stay invisible
 in a process monitor.
 
 Falls back through loose ref, packed refs, then git itself, so a repo that has
-been garbage-collected or is a linked worktree still reports correctly.
+been garbage-collected still reports correctly. A linked worktree keeps its
+branches in the common directory rather than its own gitdir, so both are
+searched — otherwise every poll in a worktree misses and forks git instead.
 """
 
 from __future__ import annotations
@@ -31,6 +33,21 @@ def git_dir(repo: Path) -> Path | None:
     return None
 
 
+def ref_dirs(base: Path) -> list[Path]:
+    """Where a ref might live, nearest first.
+
+    A linked worktree's gitdir holds only what is private to it — HEAD, index,
+    refs/bisect. Branches are shared and live in the common directory, which
+    `commondir` points at. Searching the worktree first keeps the per-worktree
+    refs winning over the shared copies of the same name.
+    """
+    try:
+        common = Path((base / "commondir").read_text().strip())
+    except OSError:
+        return [base]  # not a linked worktree: everything is already here
+    return [base, common if common.is_absolute() else (base / common).resolve()]
+
+
 def tip(repo: Path) -> str | None:
     """The sha the current branch points at, read without forking git."""
     base = git_dir(repo)
@@ -47,17 +64,18 @@ def tip(repo: Path) -> str | None:
 
     ref = head[4:].strip()
 
-    try:
-        return (base / ref).read_text().strip() or None
-    except OSError:
-        pass  # not a loose ref — probably packed
+    for directory in ref_dirs(base):
+        try:
+            return (directory / ref).read_text().strip() or None
+        except OSError:
+            pass  # not a loose ref here — try packed, then the next directory
 
-    try:
-        for line in (base / "packed-refs").read_text().splitlines():
-            if line.endswith(f" {ref}"):
-                return line.split(maxsplit=1)[0]
-    except OSError:
-        pass
+        try:
+            for line in (directory / "packed-refs").read_text().splitlines():
+                if line.endswith(f" {ref}"):
+                    return line.split(maxsplit=1)[0]
+        except OSError:
+            pass
 
     return _ask_git(repo)
 

@@ -1047,6 +1047,33 @@ class LiveTest(unittest.TestCase):
         self.git("pack-refs", "--all")
         self.assertEqual(watch.tip(self.repo), before)
 
+    def test_tip_in_a_linked_worktree_reads_the_shared_ref(self):
+        """A worktree keeps branches in the common dir, not its own gitdir."""
+        linked = Path(self.tmp.name) / "linked"
+        self.git("branch", "-q", "side")
+        self.git("worktree", "add", "-q", str(linked), "side")
+
+        forks = []
+        real = watch._ask_git
+        watch._ask_git = lambda repo: (forks.append(repo), real(repo))[1]
+        try:
+            found = watch.tip(linked)
+        finally:
+            watch._ask_git = real
+
+        expected = subprocess.run(["git", "-C", str(linked), "rev-parse", "HEAD"],
+                                  capture_output=True, text=True).stdout.strip()
+        self.assertEqual(found, expected)
+        self.assertEqual(forks, [], "the worktree poll fell back to forking git")
+
+    def test_worktree_head_is_read_before_the_shared_one(self):
+        """Two worktrees on different branches must report different tips."""
+        linked = Path(self.tmp.name) / "other"
+        self.git("branch", "-q", "side")
+        self.git("worktree", "add", "-q", str(linked), "side")
+        self.commit("three")  # advances main only
+        self.assertNotEqual(watch.tip(self.repo), watch.tip(linked))
+
     def test_refresh_picks_up_a_new_commit(self):
         self.assertEqual(len(self.app.timeline), 2)
         self.commit("three")
