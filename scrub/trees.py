@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import gitio
+from . import gitio, watch
 from .gitio import GitError
 from .model import Timeline
 
@@ -87,6 +87,9 @@ class Row:
 
     tree: Tree
     timeline: Timeline
+    # The tip when this row was built, so a cheap poll can tell whether the
+    # session behind it has committed since.
+    tip: str = ""
 
     @property
     def label(self) -> str:
@@ -107,7 +110,7 @@ def rows(repo: Path, rev_range: str | None, limit: int | None) -> list[Row]:
     for tree in discover(repo):
         timeline = load(tree, rev_range, limit)
         if timeline is not None:
-            found.append(Row(tree=tree, timeline=timeline))
+            found.append(Row(tree=tree, timeline=timeline, tip=watch.tip(tree.path) or ""))
     return found
 
 

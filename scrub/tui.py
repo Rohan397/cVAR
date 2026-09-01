@@ -658,6 +658,13 @@ class ScrubApp:
                 key = stdscr.get_wch()
             except curses.error:
                 # Timed out with no key: the only moment worth checking disk.
+                if self.overview:
+                    # Every tree, not just this one — watching several sessions
+                    # land work at once is what the overview is for.
+                    moved = self.trees_changed()
+                    if moved:
+                        self.refresh_overview(moved)
+                    continue
                 current = watch.tip(self.timeline.repo)
                 if current is not None and current != self.tip:
                     self.refresh()
@@ -741,17 +748,51 @@ class ScrubApp:
         elif key in ("\n", "\r", curses.KEY_ENTER):
             self.open_selected_tree()
         elif key == "r":
-            self.refresh_overview()
+            self.refresh_overview(self.trees_changed())
 
-    def refresh_overview(self) -> None:
-        """Rebuild every row, keeping the selected tree selected."""
+    def trees_changed(self) -> list[str]:
+        """Which trees have committed since their row was built.
+
+        One ref read per tree — the same cheap poll the grid uses, which is
+        why it can run on every idle tick without the overview costing
+        anything while nobody is committing.
+        """
+        moved = []
+        for row in self.trees:
+            current = watch.tip(row.tree.path)
+            if current is not None and current != row.tip:
+                moved.append(row.label)
+        return moved
+
+    def refresh_overview(self, moved: list[str] | None = None) -> None:
+        """Rebuild every row, keeping your place in the one you were reading."""
         was = self.selected_tree.id if self.selected_tree else None
+        counts = {row.id: len(row.timeline) for row in self.trees}
+        column, pinned = self.column, self.column_at_tip
+
         self.leave_overview()
         self.enter_overview()
-        if was is not None and self.trees:
+        if not self.trees:
+            return
+
+        self.column, self.column_at_tip = column, pinned
+        if was is not None:
             self.cursor = next(
                 (i for i, row in enumerate(self.trees) if row.id == was), self.cursor
             )
+
+        arrived = [
+            f"{row.label} +{len(row.timeline) - counts[row.id]}"
+            for row in self.trees
+            if len(row.timeline) > counts.get(row.id, 0)
+        ]
+        if arrived:
+            self.status = "  ".join(arrived)
+        elif moved:
+            # A tip moved without the count rising: an amend or a rebase.
+            self.status = f"{', '.join(moved)} rewritten"
+        else:
+            self.status = f"{len(self.trees)} worktrees"
 
     def _handoff(self, pane: str) -> None:
         if not self.bridge.available:

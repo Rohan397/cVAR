@@ -761,6 +761,61 @@ class TreeOverviewTest(unittest.TestCase):
         app.refresh_overview()
         self.assertEqual(app.selected_tree.id, chosen)
 
+    def test_a_quiet_repo_reports_no_tree_as_changed(self):
+        self.worktree("agent-auth")
+        self.worktree("agent-api")
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        self.assertEqual(app.trees_changed(), [])
+
+    def test_a_commit_in_another_session_is_noticed(self):
+        linked = self.worktree("agent-auth")
+        self.worktree("agent-api")
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        self.commit("from-another-session", repo=linked)
+        self.assertEqual(app.trees_changed(), ["agent-auth"])
+
+    def test_two_sessions_committing_at_once_are_both_noticed(self):
+        auth = self.worktree("agent-auth")
+        api = self.worktree("agent-api")
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        self.commit("a", repo=auth)
+        self.commit("b", repo=api)
+        self.assertEqual(sorted(app.trees_changed()), ["agent-api", "agent-auth"])
+
+    def test_the_status_names_the_tree_and_how_much_arrived(self):
+        linked = self.worktree("agent-auth", commits=1)
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        self.commit("x", repo=linked)
+        self.commit("y", repo=linked)
+        app.refresh_overview(app.trees_changed())
+        self.assertIn("agent-auth +2", app.status)
+
+    def test_an_amend_elsewhere_reports_a_rewrite_not_an_arrival(self):
+        linked = self.worktree("agent-auth", commits=2)
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        (linked / "agent-auth-1.py").write_text("changed\n")
+        self.git("add", "-A", repo=linked)
+        self.git("-c", "user.email=t@e", "-c", "user.name=T",
+                 "commit", "-q", "--amend", "--no-edit", repo=linked)
+        app.refresh_overview(app.trees_changed())
+        self.assertIn("rewritten", app.status)
+
+    def test_a_reload_holds_the_column_where_you_left_it(self):
+        linked = self.worktree("agent-auth", commits=2)
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        app._last_grid_w = 40
+        app.move_column(-9)
+        self.commit("later", repo=linked)
+        app.refresh_overview(app.trees_changed())
+        self.assertEqual(app.column, 30)
+        self.assertFalse(app.column_at_tip)
+
     def test_reload_picks_up_a_commit_from_another_session(self):
         linked = self.worktree("agent-auth", commits=1)
         app = self.app_on(self.repo)
