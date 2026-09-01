@@ -166,7 +166,14 @@ class Timeline:
                 )
 
         base_sha = _base_of(repo, commits)
-        return cls(repo, commits, tracks, base_sha)
+        made = cls(repo, commits, tracks, base_sha)
+        # Kept so a live view can rebuild with the same range and cap.
+        made._load_args = (repo, rev_range, limit)
+        return made
+
+    def reload(self) -> Timeline:
+        """A fresh timeline over the same range. The caller closes the old one."""
+        return Timeline.load(*self._load_args)
 
     # -- queries ---------------------------------------------------------
 

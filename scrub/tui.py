@@ -18,7 +18,7 @@ import locale
 import math
 
 from . import chunks as chunkmod
-from . import glyphs
+from . import glyphs, watch
 from .bridge import EditorBridge
 from .model import Timeline, Track
 
@@ -60,6 +60,10 @@ class ScrubApp:
         # Zoom: rows become regions of one file instead of one row per file.
         self.zoom: str | None = None
         self.chunks: list[chunkmod.Chunk] = []
+        # Live view. Follow behaves like tail -f: on while parked at the
+        # tip, off the moment you step back to look at something.
+        self.follow = True
+        self.tip = watch.tip(timeline.repo)
         self.playhead = len(timeline) - 1
         self.cursor = 0
         self.solo: str | None = None
@@ -96,6 +100,42 @@ class ScrubApp:
             return None
         return self.chunks[min(self.cursor, len(self.chunks) - 1)]
 
+    def refresh(self, announce: bool = True) -> None:
+        """Rebuild from disk, keeping your place as far as it still exists."""
+        was_track = self.selected.label if self.timeline.tracks else None
+        was_zoom = self.zoom is not None
+        previous = len(self.timeline)
+
+        old = self.timeline
+        try:
+            self.timeline = old.reload()
+        except Exception as exc:  # a rebase mid-read, a repo that vanished
+            self.status = f"reload failed: {exc}"
+            return
+        old.close()
+
+        self.tip = watch.tip(self.timeline.repo)
+        arrived = len(self.timeline) - previous
+
+        # Re-find the row by name; indices shift as commits land.
+        self.zoom, self.chunks = None, []
+        order = self.timeline.track_order()
+        self.cursor = next(
+            (i for i, track in enumerate(order) if track.label == was_track), 0
+        )
+        if self.follow:
+            self.playhead = len(self.timeline) - 1
+        else:
+            self.playhead = min(self.playhead, len(self.timeline) - 1)
+        if was_zoom and order:
+            self.toggle_zoom()
+
+        if announce and arrived > 0:
+            plural = "s" if arrived != 1 else ""
+            self.status = f"{arrived} new commit{plural}"
+        elif announce:
+            self.status = "reloaded"
+
     def toggle_zoom(self) -> None:
         """Zoom into the selected file, or back out to the file list."""
         if self.zoom is not None:
@@ -117,6 +157,8 @@ class ScrubApp:
 
     def move_playhead(self, delta: int) -> None:
         self.playhead = max(0, min(self.playhead + delta, len(self.timeline) - 1))
+        # Stepping away from the tip means you are reading, not watching.
+        self.follow = self.playhead == len(self.timeline) - 1
 
     def move_cursor(self, delta: int) -> None:
         self.cursor = max(0, min(self.cursor + delta, len(self.rows) - 1))
@@ -300,22 +342,23 @@ class ScrubApp:
         )
         return (
             f"{G.left}{G.right} commit  {G.up}{G.down} track  [ ] next change  "
-            f"{G.enter} {self.default_pane}  {keys}  "
+            f"{G.enter} {self.default_pane}  {keys}  r reload  "
             f"{'z files' if self.zoom else 'z chunks'}  f solo  q quit"
         )
 
     def _header(self) -> str:
         timeline = self.timeline
         churn = sum(t.weight for t in timeline.tracks.values())
+        live = "  ●live" if self.follow else ""
         if self.zoom is not None:
             return (
                 f"scrub  {self.playhead + 1}/{len(timeline)} commits · "
-                f"{self.selected.label} · {len(self.chunks)} changed regions"
+                f"{self.selected.label} · {len(self.chunks)} changed regions{live}"
             )
         solo = f"  solo:{self.solo}" if self.solo else ""
         return (
             f"scrub  {self.playhead + 1}/{len(timeline)} commits · "
-            f"{len(timeline.tracks)} tracks · {churn} lines{solo}"
+            f"{len(timeline.tracks)} tracks · {churn} lines{solo}{live}"
         )
 
     def _clip_line(self) -> str:
@@ -332,6 +375,15 @@ class ScrubApp:
     def run(self, stdscr: "curses._CursesWindow") -> None:
         curses.curs_set(0)
         stdscr.keypad(True)
+        # Wake twice a second so new commits appear without a keypress. The
+        # process sleeps in the kernel between ticks; it does not spin.
+        stdscr.timeout(500)
+        # Assemble split escape sequences rather than surfacing a bare ESC.
+        try:
+            curses.set_escdelay(25)
+        except (AttributeError, curses.error):
+            pass  # older curses builds
+
         _init_colors()
         # Terminal editors need the actual terminal, not a curses window.
         self.bridge.suspend = lambda: _suspended(stdscr)
@@ -341,9 +393,16 @@ class ScrubApp:
             try:
                 key = stdscr.get_wch()
             except curses.error:
+                # Timed out with no key: the only moment worth checking disk.
+                current = watch.tip(self.timeline.repo)
+                if current is not None and current != self.tip:
+                    self.refresh()
                 continue
 
-            if key in ("q", "Q", "\x1b"):
+            # ESC is deliberately not a quit key. With a read timeout an
+            # arrow key's escape sequence can be delivered split, and a bare
+            # ESC arriving first would quit the moment you pressed left.
+            if key in ("q", "Q"):
                 return
             if key == curses.KEY_RESIZE:
                 continue
@@ -361,8 +420,17 @@ class ScrubApp:
                 self.jump_to_clip(1)
             elif key == "g":
                 self.playhead = 0
+                self.follow = False
             elif key == "G":
                 self.playhead = len(self.timeline) - 1
+                self.follow = True
+            elif key == "r":
+                self.refresh()
+            elif key == "F":
+                self.follow = not self.follow
+                if self.follow:
+                    self.playhead = len(self.timeline) - 1
+                self.status = "following" if self.follow else "not following"
             elif key == "f":
                 self.toggle_solo()
             elif key == "z":

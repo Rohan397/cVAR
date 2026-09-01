@@ -28,7 +28,7 @@ from scrub.bridge import (  # noqa: E402
 import subprocess  # noqa: E402
 
 from scrub import bridge as bridge_mod  # noqa: E402
-from scrub import chunks, doctor, glyphs  # noqa: E402
+from scrub import chunks, doctor, glyphs, watch  # noqa: E402
 from scrub.model import Timeline  # noqa: E402
 from scrub.tui import ST_DELETED, ST_RAMP, ScrubApp  # noqa: E402
 
@@ -926,6 +926,87 @@ class GlyphTest(unittest.TestCase):
         # help bar is the worst place to render a "?".
         self.assertEqual(glyphs.UNICODE.enter, "enter")
         self.assertEqual(glyphs.ASCII.enter, "enter")
+
+
+class LiveTest(unittest.TestCase):
+    """Picking up commits that land while the scrubber is open."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.repo = Path(self.tmp.name) / "repo"
+        self.repo.mkdir()
+        self.git("init", "-q", "-b", "main")
+        self.commit("one")
+        self.commit("two")
+        self.timeline = Timeline.load(self.repo)
+        self.addCleanup(self.timeline.close)
+        self.app = ScrubApp(self.timeline, EditorBridge(self.timeline, "/nonexistent"))
+
+    def git(self, *args):
+        subprocess.run(["git", "-C", str(self.repo), *args],
+                       check=True, stdout=subprocess.DEVNULL)
+
+    def commit(self, message):
+        (self.repo / f"{message}.py").write_text("x\n")
+        self.git("add", "-A")
+        self.git("-c", "user.email=t@e", "-c", "user.name=T",
+                 "commit", "-q", "-m", message)
+
+    def test_tip_matches_git_without_forking_it(self):
+        asked = subprocess.run(["git", "-C", str(self.repo), "rev-parse", "HEAD"],
+                               capture_output=True, text=True).stdout.strip()
+        self.assertEqual(watch.tip(self.repo), asked)
+
+    def test_tip_survives_packed_refs(self):
+        # `git gc` moves loose refs into packed-refs; the loose file disappears.
+        before = watch.tip(self.repo)
+        self.git("pack-refs", "--all")
+        self.assertEqual(watch.tip(self.repo), before)
+
+    def test_refresh_picks_up_a_new_commit(self):
+        self.assertEqual(len(self.app.timeline), 2)
+        self.commit("three")
+        self.app.refresh()
+        self.assertEqual(len(self.app.timeline), 3)
+        self.assertIn("1 new commit", self.app.status)
+
+    def test_following_rides_the_tip(self):
+        self.assertTrue(self.app.follow)
+        self.commit("three")
+        self.app.refresh()
+        self.assertEqual(self.app.playhead, len(self.app.timeline) - 1)
+
+    def test_stepping_back_stops_following(self):
+        # Reading something is not watching it; the playhead must stay put.
+        self.app.move_playhead(-1)
+        self.assertFalse(self.app.follow)
+        parked = self.app.playhead
+        self.commit("three")
+        self.app.refresh()
+        self.assertEqual(self.app.playhead, parked)
+
+    def test_jumping_to_the_end_resumes_following(self):
+        self.app.move_playhead(-1)
+        self.assertFalse(self.app.follow)
+        self.app.playhead = len(self.app.timeline) - 1
+        self.app.follow = True
+        self.commit("three")
+        self.app.refresh()
+        self.assertEqual(self.app.playhead, len(self.app.timeline) - 1)
+
+    def test_refresh_keeps_the_selected_file(self):
+        order = self.app.tracks
+        self.app.cursor = len(order) - 1
+        chosen = self.app.selected.label
+        self.commit("three")
+        self.app.refresh()
+        self.assertEqual(self.app.selected.label, chosen)
+
+    def test_a_broken_reload_reports_instead_of_raising(self):
+        self.app.timeline._load_args = (Path("/nonexistent-repo"), None, None)
+        self.app.refresh()
+        self.assertIn("reload failed", self.app.status)
 
 
 class ChunkTest(unittest.TestCase):
