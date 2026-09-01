@@ -1228,6 +1228,79 @@ class CursesSmokeTest(unittest.TestCase):
         self.assertIn("commit", text)
 
 
+class TreeSmokeTest(unittest.TestCase):
+    """Drive the overview end to end: open a tree, come back, quit."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        root = Path(cls._tmp.name)
+        cls.repo = build(root / "coding-experience")
+
+        def git(*args, at):
+            subprocess.run(["git", "-C", str(at), *args], check=True,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        git("checkout", "-q", "-B", "main", at=cls.repo)
+        for name in ("agent-auth", "agent-api"):
+            path = root / name
+            git("worktree", "add", "-q", "-b", name, str(path), "main", at=cls.repo)
+            (path / f"{name}.py").write_text("x\n" * 5)
+            git("add", "-A", at=path)
+            git("-c", "user.email=t@e", "-c", "user.name=T",
+                "commit", "-q", "-m", f"{name} work", at=path)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def drive(self, keys: bytes) -> str:
+        import pty
+
+        pid, fd = pty.fork()
+        if pid == 0:  # child
+            os.environ["TERM"] = "xterm-256color"
+            os.chdir(PROJECT)
+            os.execv(sys.executable, [sys.executable, "-m", "scrub", str(self.repo)])
+
+        time.sleep(1.5)  # three timelines to load and paint
+        os.write(fd, keys)
+        output = b""
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            done, status = os.waitpid(pid, os.WNOHANG)
+            try:
+                chunk = os.read(fd, 65536)
+            except OSError:
+                chunk = b""
+            output += chunk
+            if done:
+                break
+            time.sleep(0.1)
+        else:
+            os.kill(pid, 9)
+            os.waitpid(pid, 0)
+            self.fail("TUI did not exit on 'q'")
+        os.close(fd)
+        self.assertEqual(os.waitstatus_to_exitcode(status), 0)
+        return output.decode(errors="replace")
+
+    def test_a_multi_worktree_repo_opens_on_the_overview(self):
+        text = self.drive(b"q")
+        self.assertIn("worktrees", text)
+        self.assertIn("agent-auth", text)
+
+    def test_opening_a_tree_and_stepping_back_up_exits_cleanly(self):
+        # down, down, enter (open a tree), w (back up), q
+        text = self.drive(b"\x1b[B\x1b[B\r" + b"w" + b"q")
+        self.assertIn("worktrees", text)
+
+    def test_the_grid_is_reachable_through_a_tree(self):
+        # enter on the first row, then look for the file grid's own furniture
+        text = self.drive(b"\r" + b"q")
+        self.assertIn("tracks", text)
+
+
 class DefaultPaneTest(unittest.TestCase):
     """⏎ is rebindable; the explicit per-pane keys always remain."""
 
