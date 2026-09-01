@@ -1025,6 +1025,9 @@ class LiveTest(unittest.TestCase):
         self.timeline = Timeline.load(self.repo)
         self.addCleanup(self.timeline.close)
         self.app = ScrubApp(self.timeline, EditorBridge(self.timeline, "/nonexistent"))
+        # refresh() replaces the timeline, so the one to close at the end is
+        # whichever the app is holding by then, not the one loaded here.
+        self.addCleanup(lambda: self.app.timeline.close())
 
     def git(self, *args):
         subprocess.run(["git", "-C", str(self.repo), *args],
@@ -1112,6 +1115,25 @@ class LiveTest(unittest.TestCase):
         self.commit("three")
         self.app.refresh()
         self.assertEqual(self.app.selected.label, chosen)
+
+    def test_a_handoff_after_a_reload_reads_the_new_timeline(self):
+        """Another session committing must not leave the bridge on dead state."""
+        track = self.app.selected.id
+        self.commit("three")
+        self.app.refresh()
+        self.assertIs(self.app.bridge.timeline, self.app.timeline)
+        # Would raise IndexError off the end of the old commit list.
+        self.app.bridge.open_state(self.app.selected.id, self.app.playhead)
+
+    def test_a_handoff_after_an_amend_does_not_use_a_closed_batch(self):
+        self.app.timeline.file_at(self.app.selected.id, 0)  # force the batch open
+        (self.repo / "one.py").write_text("amended\n")
+        self.git("add", "-A")
+        self.git("-c", "user.email=t@e", "-c", "user.name=T",
+                 "commit", "-q", "--amend", "--no-edit")
+        self.app.refresh()
+        # Would raise ValueError: write to closed file.
+        self.app.bridge.open_state(self.app.selected.id, self.app.playhead)
 
     def test_a_broken_reload_reports_instead_of_raising(self):
         self.app.timeline._load_args = (Path("/nonexistent-repo"), None, None)

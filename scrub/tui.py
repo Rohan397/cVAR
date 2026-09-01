@@ -115,6 +115,10 @@ class ScrubApp:
             self.status = f"reload failed: {exc}"
             return
         old.close()
+        # The bridge holds its own reference, and the timeline it was holding
+        # has just been closed. Leaving it stale means the next handoff reads
+        # through a dead cat-file, or indexes commits that no longer exist.
+        self.bridge.timeline = self.timeline
 
         self.tip = watch.tip(self.timeline.repo)
         arrived = len(self.timeline) - previous
