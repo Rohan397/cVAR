@@ -253,6 +253,15 @@ class NvimBridgeTest(unittest.TestCase):
             time.sleep(0.02)
         self.fail("editor was never launched")
 
+    def launch_argv(self) -> list[str]:
+        """Launch arguments as tokens.
+
+        Substring checks against the joined command line are unsound: a
+        generated temp path like `scrub-dyomifnp` contains "-d", so asserting
+        a flag's absence fails at random.
+        """
+        return self.wait_for_launch().split()
+
     def test_nvim_without_a_server_suspends_the_tui(self):
         bridge = self.bridge()
         self.assertEqual(bridge.mode, "suspend")
@@ -280,15 +289,16 @@ class NvimBridgeTest(unittest.TestCase):
         bridge.open_diff(self.track.id, 5)
         # The editor runs to completion between the two, not detached.
         self.assertEqual(events, ["out", "back"])
-        self.assertIn("-d", self.editor.launches()[0])
+        self.assertIn("-d", self.editor.launches()[0].split())
 
     def test_suspend_mode_passes_vim_diff_flag_with_both_revisions(self):
         bridge = self.bridge()
         bridge.open_diff(self.track.id, 5)
-        launch = self.wait_for_launch()
+        argv = self.launch_argv()
+        launch = " ".join(argv)
         before = self.timeline.commits[4].short
         after = self.timeline.commits[5].short
-        self.assertIn("-d", launch)
+        self.assertIn("-d", argv)
         self.assertIn(f"@{before}.py", launch)
         self.assertIn(f"@{after}.py", launch)
 
@@ -350,15 +360,15 @@ class NvimBridgeTest(unittest.TestCase):
     def test_state_opens_a_single_buffer_without_the_diff_flag(self):
         bridge = self.bridge()
         bridge.open_state(self.track.id, 7)
-        launch = self.wait_for_launch()
-        self.assertNotIn("-d", launch)
-        self.assertTrue(launch.strip().endswith(".py"))
+        argv = self.launch_argv()
+        self.assertNotIn("-d", argv)
+        self.assertTrue(argv[-1].endswith(".py"))
 
     def test_snapshots_open_read_only_so_they_cannot_be_edited(self):
         # The temp dir is deleted on exit; a save would silently vanish.
         bridge = self.bridge()
         bridge.open_diff(self.track.id, 5)
-        self.assertIn("-R", self.wait_for_launch())
+        self.assertIn("-R", self.launch_argv())
 
     def test_remote_mode_also_locks_the_buffers(self):
         bridge = self.bridge(server="/tmp/nvim.sock")
