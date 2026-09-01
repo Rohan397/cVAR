@@ -100,6 +100,27 @@ class DiscoveryTest(unittest.TestCase):
         self.addCleanup(loaded.close)
         self.assertEqual([c.subject for c in loaded.commits], ["two", "three"])
 
+    def test_rows_come_back_in_listing_order_despite_loading_in_parallel(self):
+        for name in ("agent-zulu", "agent-alpha", "agent-mike"):
+            path = self.add_worktree(name)
+            self.commit("work", repo=path)
+        built = trees.rows(self.repo, None, None)
+        self.addCleanup(lambda: [r.timeline.close() for r in built])
+        self.assertEqual(
+            [r.label for r in built],
+            [t.label for t in trees.discover(self.repo)],
+        )
+
+    def test_every_row_carries_the_tip_it_was_built_from(self):
+        path = self.add_worktree("agent-auth")
+        self.commit("work", repo=path)
+        built = trees.rows(self.repo, None, None)
+        self.addCleanup(lambda: [r.timeline.close() for r in built])
+        row = next(r for r in built if r.label == "agent-auth")
+        head = subprocess.run(["git", "-C", str(path), "rev-parse", "HEAD"],
+                              capture_output=True, text=True).stdout.strip()
+        self.assertEqual(row.tip, head)
+
     def test_a_tree_with_no_commits_of_its_own_has_no_timeline(self):
         linked = self.add_worktree("agent-auth")
         by_label = {t.label: t for t in trees.discover(self.repo)}
