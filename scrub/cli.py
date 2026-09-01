@@ -62,6 +62,20 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="draw with plain ASCII, for fonts missing the block glyphs",
     )
+    trees_group = parser.add_mutually_exclusive_group()
+    trees_group.add_argument(
+        "--trees",
+        dest="trees",
+        action="store_true",
+        default=None,
+        help="start on the worktree overview (default when the repo has several)",
+    )
+    trees_group.add_argument(
+        "--no-trees",
+        dest="trees",
+        action="store_false",
+        help="start on the file grid even when the repo has several worktrees",
+    )
     parser.add_argument("--no-color", action="store_true")
     args = parser.parse_args(argv)
     if args.ascii:
@@ -103,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
             print(render.grid(timeline, playhead, color=not args.no_color))
             return 0
 
-        tui.launch(timeline, args.editor, args.nvim_server, args.default_pane)
+        tui.launch(timeline, args.editor, args.nvim_server, args.default_pane, args.trees)
     return 0
 
 

@@ -30,7 +30,13 @@ import subprocess  # noqa: E402
 from scrub import bridge as bridge_mod  # noqa: E402
 from scrub import chunks, doctor, glyphs, watch  # noqa: E402
 from scrub.model import Timeline  # noqa: E402
-from scrub.tui import ORDERS, ST_DELETED, ST_RAMP, ScrubApp  # noqa: E402
+from scrub.tui import (  # noqa: E402
+    ORDERS,
+    ST_DELETED,
+    ST_RAMP,
+    ScrubApp,
+    open_initial_view,
+)
 
 PROJECT = Path(__file__).resolve().parent.parent
 
@@ -856,6 +862,40 @@ class TreeDrillInTest(TreeOverviewTest):
         linked = self.worktree("agent-auth", commits=2)
         app = self.opened()
         self.assertEqual(app.tip, watch.tip(linked))
+
+
+class TreeLaunchTest(TreeOverviewTest):
+    """Which view scrub opens on."""
+
+    def launched(self, repo, start_trees=None):
+        """The decision launch() makes, without taking over the terminal."""
+        timeline = Timeline.load(repo)
+        self.addCleanup(timeline.close)
+        app = ScrubApp(timeline, EditorBridge(timeline, "/nonexistent"))
+        self.addCleanup(app.leave_overview)
+        open_initial_view(app, start_trees)
+        return app
+
+    def test_one_worktree_opens_straight_onto_the_grid(self):
+        app = self.launched(self.repo)
+        self.assertFalse(app.overview)
+        self.assertEqual(app.status, "", "a lone worktree should say nothing")
+
+    def test_several_worktrees_open_on_the_overview(self):
+        self.worktree("agent-auth")
+        self.worktree("agent-api")
+        app = self.launched(self.repo)
+        self.assertTrue(app.overview)
+
+    def test_no_trees_opens_on_the_grid_regardless(self):
+        self.worktree("agent-auth")
+        app = self.launched(self.repo, start_trees=False)
+        self.assertFalse(app.overview)
+
+    def test_asking_for_trees_where_there_are_none_says_so(self):
+        app = self.launched(self.repo, start_trees=True)
+        self.assertFalse(app.overview)
+        self.assertIn("one worktree", app.status)
 
 
 class TreeOverviewRenderTest(unittest.TestCase):

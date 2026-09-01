@@ -878,18 +878,41 @@ def _put(win: "curses._CursesWindow", y: int, x: int, text: str, width: int, att
         pass  # writing the final cell always raises; the glyph still lands
 
 
+def open_initial_view(app: ScrubApp, start_trees: bool | None) -> None:
+    """Decide which of the two views scrub opens on.
+
+    Several worktrees means several sessions, and which one to look at is then
+    the first question — so it is the first thing shown. One worktree is the
+    overwhelming common case and opens straight onto the grid, as it always
+    has. `start_trees` overrides in both directions.
+    """
+    if start_trees is False:
+        return
+    app.enter_overview()
+    if not app.overview and start_trees is None:
+        app.status = ""  # nothing to choose between; not worth saying so
+
+
 def launch(
     timeline: Timeline,
     editor: str | None = None,
     server: str | None = None,
     default_pane: str = "unified",
+    start_trees: bool | None = None,
 ) -> None:
     # curses encodes output through the C locale, so the ramp glyphs and box
     # drawing come out as garbage unless this is set first.
     locale.setlocale(locale.LC_ALL, "")
 
     bridge = EditorBridge(timeline, editor, server)
+    app = ScrubApp(timeline, bridge, default_pane)
+
+    open_initial_view(app, start_trees)
+
     try:
-        curses.wrapper(ScrubApp(timeline, bridge, default_pane).run)
+        curses.wrapper(app.run)
     finally:
+        app.leave_overview()
+        if app.timeline is not timeline:
+            app.timeline.close()  # a tree was opened; the caller cannot know
         bridge.close()
