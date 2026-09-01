@@ -917,13 +917,17 @@ class GlyphTest(unittest.TestCase):
         cells = set(a.ramp) | {a.unchanged, a.absent, a.deleted}
         self.assertEqual(len(cells), 7)
 
-    def test_ramp_shares_a_block_with_the_full_block(self):
-        # The shade characters U+2591-2593 are absent from many fonts that ship
-        # U+2588, so a shade ramp renders as "?" on machines that draw the full
-        # block fine. Keeping the ramp in the block-elements range travels.
-        for ch in glyphs.UNICODE.ramp:
-            self.assertTrue(0x2580 <= ord(ch) <= 0x259F, f"{ch} U+{ord(ch):04X}")
-        self.assertEqual(glyphs.UNICODE.ramp[-1], "█")
+    def test_ramp_is_ascii_even_in_the_unicode_set(self):
+        # Block-element coverage is patchy: both the shade blocks and the
+        # eighth blocks have been observed missing from a font that draws the
+        # rest of the grid fine. Colour carries magnitude regardless.
+        glyphs.UNICODE.ramp.encode("ascii")
+
+    def test_the_rest_of_the_unicode_set_is_still_unicode(self):
+        # These are proven to render; there is no reason to give them up.
+        for ch in (glyphs.UNICODE.unchanged, glyphs.UNICODE.tick,
+                   glyphs.UNICODE.caret, glyphs.UNICODE.divider):
+            self.assertGreater(ord(ch), 127)
 
     def test_both_sets_have_a_four_step_ramp(self):
         self.assertEqual(len(glyphs.UNICODE.ramp), 4)

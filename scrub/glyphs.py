@@ -32,13 +32,18 @@ class Glyphs:
     enter: str
 
 
-# Height, not shading. U+2591-2593 (the shade blocks) are missing from many
-# monospace fonts that nonetheless ship U+2588, so a shade ramp renders as "?"
-# on exactly the machines that can draw the full block fine. The eighth-block
-# family lives alongside U+2588 and travels with it, and rising height reads as
-# magnitude at least as well as rising density.
+# The ramp is ASCII even in the "unicode" set, and that is deliberate.
+#
+# It is the one part of the grid that has actually failed in the wild: the
+# shade blocks U+2591-2593 were missing from a font, and so were the eighth
+# blocks U+2582-2586 -- on a terminal that draws U+2588, U+00B7, U+253C and
+# U+25BC without complaint. Coverage of this Unicode range is patchy in a way
+# the rest of the grid's characters are not, and a cell that renders as "?"
+# still looks like data, which is worse than one that looks plain.
+#
+# Colour carries the same four steps, so nothing is lost but texture.
 UNICODE = Glyphs(
-    ramp="▂▄▆█", unchanged="·", absent=" ", deleted="×",
+    ramp=".:*#", unchanged="·", absent=" ", deleted="×",
     tick="┼", rule="─", caret="▼", divider="│", ellipsis="…", dash="–",
     # Spelled out rather than U+23CE: the return symbol is the glyph most often
     # missing from a monospace font, and a help bar is the worst place for a "?".
