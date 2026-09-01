@@ -206,7 +206,7 @@ class NavigationTest(unittest.TestCase):
         self.assertEqual(self.app.cell(util, 6)[0], "×")  # deleted here
         self.assertEqual(self.app.cell(util, 7)[0], " ")  # gone
         self.assertEqual(self.app.cell(test, 0)[0], " ")  # not added yet
-        self.assertIn(self.app.cell(test, 2)[0], "░▒▓█")  # added here
+        self.assertIn(self.app.cell(test, 2)[0], glyphs.UNICODE.ramp)  # added here
 
 
 class NvimBridgeTest(unittest.TestCase):
@@ -579,11 +579,12 @@ class RenderTest(unittest.TestCase):
 
     def test_each_commit_becomes_a_wide_clip(self):
         # Eight commits across ~76 grid columns: runs, not single cells.
-        self.assertIn("▓▓▓▓▓▓▓▓", self.row("src/authentication.py"))
+        heavy = glyphs.UNICODE.ramp[-1]
+        self.assertIn(heavy * 8, self.row("src/authentication.py"))
 
     def test_ramp_glyphs_survive_the_locale(self):
         row = self.row("src/authentication.py")
-        self.assertTrue(set("░▓█") <= set(row), row)
+        self.assertTrue(set(glyphs.UNICODE.ramp[1:]) & set(row), row)
 
     def test_deleted_track_renders_its_own_glyph(self):
         self.assertIn("×××", self.row("src/util.py"))
@@ -915,6 +916,14 @@ class GlyphTest(unittest.TestCase):
         a = glyphs.ASCII
         cells = set(a.ramp) | {a.unchanged, a.absent, a.deleted}
         self.assertEqual(len(cells), 7)
+
+    def test_ramp_shares_a_block_with_the_full_block(self):
+        # The shade characters U+2591-2593 are absent from many fonts that ship
+        # U+2588, so a shade ramp renders as "?" on machines that draw the full
+        # block fine. Keeping the ramp in the block-elements range travels.
+        for ch in glyphs.UNICODE.ramp:
+            self.assertTrue(0x2580 <= ord(ch) <= 0x259F, f"{ch} U+{ord(ch):04X}")
+        self.assertEqual(glyphs.UNICODE.ramp[-1], "█")
 
     def test_both_sets_have_a_four_step_ramp(self):
         self.assertEqual(len(glyphs.UNICODE.ramp), 4)

@@ -53,6 +53,11 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--glyphs",
+        action="store_true",
+        help="print every character the grid uses, to find the ones your font lacks",
+    )
+    parser.add_argument(
         "--ascii",
         action="store_true",
         help="draw with plain ASCII, for fonts missing the block glyphs",
@@ -61,6 +66,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.ascii:
         glyphs.use_ascii()
+
+    if args.glyphs:
+        print(glyphs.test_card())
+        return 0
 
     try:
         timeline = Timeline.load(args.repo, args.rev_range, args.limit)
