@@ -180,9 +180,20 @@ class Timeline:
     def __len__(self) -> int:
         return len(self.commits)
 
-    def track_order(self) -> list[Track]:
-        """Tracks in reading order: when they first appear, then by churn."""
-        return sorted(self.tracks.values(), key=lambda t: (t.first_index, -t.weight, t.label))
+    def track_order(self, by: str = "recent") -> list[Track]:
+        """Rows in reading order.
+
+        `recent` puts whatever changed last at the top, so an active branch
+        keeps its live files in view instead of burying them under whatever
+        happened to be created first. `first` restores the chronological
+        waterfall, `churn` ranks by lines changed.
+        """
+        keys = {
+            "recent": lambda t: (-t.last_index, -t.weight, t.label),
+            "first": lambda t: (t.first_index, -t.weight, t.label),
+            "churn": lambda t: (-t.weight, t.first_index, t.label),
+        }
+        return sorted(self.tracks.values(), key=keys.get(by, keys["recent"]))
 
     def active_tracks(self, index: int) -> list[Track]:
         return [t for t in self.track_order() if t.state_at(index) != "absent"]

@@ -25,6 +25,7 @@ from .model import Timeline, Track
 RAMP_STEPS = 4  # the ramp is always four buckets, whichever set is in force
 
 PANES = ("unified", "diff", "state", "cumulative")
+ORDERS = ("recent", "first", "churn")
 
 # Style ids. Resolved to curses attributes once colours are initialised, so the
 # cell logic stays testable without a terminal.
@@ -63,6 +64,7 @@ class ScrubApp:
         # Live view. Follow behaves like tail -f: on while parked at the
         # tip, off the moment you step back to look at something.
         self.follow = True
+        self.order = "recent"
         self.tip = watch.tip(timeline.repo)
         self.playhead = len(timeline) - 1
         self.cursor = 0
@@ -81,7 +83,7 @@ class ScrubApp:
     def tracks(self) -> list[Track]:
         if self.solo is not None:
             return [self.timeline.tracks[self.solo]]
-        return self.timeline.track_order()
+        return self.timeline.track_order(self.order)
 
     @property
     def selected(self) -> Track:
@@ -119,7 +121,7 @@ class ScrubApp:
 
         # Re-find the row by name; indices shift as commits land.
         self.zoom, self.chunks = None, []
-        order = self.timeline.track_order()
+        order = self.timeline.track_order(self.order)
         self.cursor = next(
             (i for i, track in enumerate(order) if track.label == was_track), 0
         )
@@ -176,6 +178,18 @@ class ScrubApp:
             return
         self.playhead = upcoming[0] if direction > 0 else upcoming[-1]
         self.status = ""
+
+    def cycle_order(self) -> None:
+        """Step through the row orderings, keeping the selected file selected."""
+        was = self.selected.label if self.timeline.tracks else None
+        self.order = ORDERS[(ORDERS.index(self.order) + 1) % len(ORDERS)]
+        rows = self.tracks
+        self.cursor = next((i for i, t in enumerate(rows) if t.label == was), 0)
+        self.status = {
+            "recent": "ordered by most recently changed",
+            "first": "ordered by when each file first appeared",
+            "churn": "ordered by lines changed",
+        }[self.order]
 
     def toggle_solo(self) -> None:
         if self.solo is not None:
@@ -342,7 +356,7 @@ class ScrubApp:
         )
         return (
             f"{G.left}{G.right} commit  {G.up}{G.down} track  [ ] next change  "
-            f"{G.enter} {self.default_pane}  {keys}  r reload  "
+            f"{G.enter} {self.default_pane}  {keys}  o order  r reload  "
             f"{'z files' if self.zoom else 'z chunks'}  f solo  q quit"
         )
 
@@ -358,7 +372,7 @@ class ScrubApp:
         solo = f"  solo:{self.solo}" if self.solo else ""
         return (
             f"scrub  {self.playhead + 1}/{len(timeline)} commits · "
-            f"{len(timeline.tracks)} tracks · {churn} lines{solo}{live}"
+            f"{len(timeline.tracks)} tracks · {churn} lines · by {self.order}{solo}{live}"
         )
 
     def _clip_line(self) -> str:
@@ -431,6 +445,8 @@ class ScrubApp:
                 if self.follow:
                     self.playhead = len(self.timeline) - 1
                 self.status = "following" if self.follow else "not following"
+            elif key == "o":
+                self.cycle_order()
             elif key == "f":
                 self.toggle_solo()
             elif key == "z":

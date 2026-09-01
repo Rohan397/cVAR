@@ -30,7 +30,7 @@ import subprocess  # noqa: E402
 from scrub import bridge as bridge_mod  # noqa: E402
 from scrub import chunks, doctor, glyphs, watch  # noqa: E402
 from scrub.model import Timeline  # noqa: E402
-from scrub.tui import ST_DELETED, ST_RAMP, ScrubApp  # noqa: E402
+from scrub.tui import ORDERS, ST_DELETED, ST_RAMP, ScrubApp  # noqa: E402
 
 PROJECT = Path(__file__).resolve().parent.parent
 
@@ -902,6 +902,66 @@ class UnifiedDiffTest(unittest.TestCase):
 
     def test_a_line_past_the_end_does_not_crash(self):
         self.assertIsNone(bridge_mod._diff_line_for("@@ -1 +1 @@\n ctx\n", 9999))
+
+
+class OrderTest(unittest.TestCase):
+    """Row ordering. Default puts the live files at the top."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.repo = build(Path(cls._tmp.name) / "repo")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def setUp(self):
+        self.timeline = Timeline.load(self.repo)
+        self.addCleanup(self.timeline.close)
+
+    def test_recent_is_the_default(self):
+        by_default = [t.label for t in self.timeline.track_order()]
+        explicit = [t.label for t in self.timeline.track_order("recent")]
+        self.assertEqual(by_default, explicit)
+
+    def test_recent_puts_the_last_touched_file_first(self):
+        rows = self.timeline.track_order("recent")
+        last_touched = [t.last_index for t in rows]
+        self.assertEqual(last_touched, sorted(last_touched, reverse=True))
+
+    def test_first_restores_the_chronological_waterfall(self):
+        rows = self.timeline.track_order("first")
+        appeared = [t.first_index for t in rows]
+        self.assertEqual(appeared, sorted(appeared))
+
+    def test_churn_ranks_by_lines_changed(self):
+        rows = self.timeline.track_order("churn")
+        weights = [t.weight for t in rows]
+        self.assertEqual(weights, sorted(weights, reverse=True))
+
+    def test_an_unknown_ordering_falls_back_rather_than_raising(self):
+        self.assertEqual(
+            [t.label for t in self.timeline.track_order("nonsense")],
+            [t.label for t in self.timeline.track_order("recent")],
+        )
+
+    def test_cycling_keeps_the_selected_file_selected(self):
+        # Rows move under the cursor; losing your place on every press would
+        # make the key useless for comparing orderings.
+        app = ScrubApp(self.timeline, EditorBridge(self.timeline, "/nonexistent"))
+        app.cursor = 2
+        chosen = app.selected.label
+        for _ in range(len(ORDERS)):
+            app.cycle_order()
+            self.assertEqual(app.selected.label, chosen)
+
+    def test_cycling_returns_to_where_it_started(self):
+        app = ScrubApp(self.timeline, EditorBridge(self.timeline, "/nonexistent"))
+        start = app.order
+        for _ in range(len(ORDERS)):
+            app.cycle_order()
+        self.assertEqual(app.order, start)
 
 
 class GlyphTest(unittest.TestCase):
