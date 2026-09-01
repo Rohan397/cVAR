@@ -81,6 +81,36 @@ def _fields(block: str) -> dict[str, str]:
     return fields
 
 
+@dataclass
+class Row:
+    """One tree with its branch loaded — an overview row."""
+
+    tree: Tree
+    timeline: Timeline
+
+    @property
+    def label(self) -> str:
+        return self.tree.label
+
+    @property
+    def id(self) -> str:
+        return str(self.tree.path)
+
+    @property
+    def weight(self) -> int:
+        return sum(t.weight for t in self.timeline.tracks.values())
+
+
+def rows(repo: Path, rev_range: str | None, limit: int | None) -> list[Row]:
+    """Every worktree that has a branch worth showing, in listing order."""
+    found = []
+    for tree in discover(repo):
+        timeline = load(tree, rev_range, limit)
+        if timeline is not None:
+            found.append(Row(tree=tree, timeline=timeline))
+    return found
+
+
 def load(tree: Tree, rev_range: str | None, limit: int | None) -> Timeline | None:
     """The timeline for one tree, or None if it has nothing to show.
 
@@ -130,14 +160,24 @@ def column_range(total: int, width: int, column: int) -> range:
 
 
 def churn_columns(timeline: Timeline, width: int) -> list[int]:
-    """One row's worth of churn, bucketed into `width` columns."""
+    """One row's worth of churn, bucketed into `width` columns.
+
+    A column carries the churn of a *typical* commit inside it, not the total.
+    Summing would make the rows incomparable, which is the one thing they have
+    to be: a branch shorter than the grid stretches, so every column repeats
+    one commit's whole weight, while a longer branch compresses several
+    commits into each. Under a sum, a one-commit branch reads as heavy as a
+    fifty-commit one and the overview says the opposite of the truth.
+    """
     total = len(timeline)
     if total == 0 or width <= 0:
         return [0] * max(width, 0)
     churn = commit_churn(timeline)
-    return [
-        sum(churn[i] for i in column_range(total, width, x)) for x in range(width)
-    ]
+    columns = []
+    for x in range(width):
+        covered = column_range(total, width, x)
+        columns.append(sum(churn[i] for i in covered) // len(covered))
+    return columns
 
 
 def column_commit(total: int, width: int, column: int) -> int:

@@ -17,8 +17,11 @@ import curses
 import locale
 import math
 
+from datetime import datetime
+
 from . import chunks as chunkmod
 from . import glyphs, watch
+from . import trees as treesmod
 from .bridge import EditorBridge
 from .model import Timeline, Track
 
@@ -65,6 +68,16 @@ class ScrubApp:
         # tip, off the moment you step back to look at something.
         self.follow = True
         self.order = "recent"
+        # The trees overview: one row per worktree, a level above the file
+        # grid. Empty until entered, because discovering it costs a git call
+        # per tree and most repos have exactly one.
+        self.overview = False
+        self.trees: list[treesmod.Row] = []
+        self.column = 0
+        # The overview's answer to `follow`. The grid width is not known until
+        # a draw has happened, so "the newest column" cannot be stored as a
+        # number at the moment it is asked for.
+        self.column_at_tip = True
         self.tip = watch.tip(timeline.repo)
         self.playhead = len(timeline) - 1
         self.cursor = 0
@@ -226,6 +239,97 @@ class ScrubApp:
             return glyphs.active().unchanged, ST_QUIET
         return glyphs.active().absent, ST_ABSENT
 
+    # -- trees -----------------------------------------------------------
+
+    def enter_overview(self) -> None:
+        """Load one row per worktree and step up to them.
+
+        Rows carry their own timelines, loaded here rather than at launch: a
+        repo with one worktree — nearly all of them — should never pay for
+        this.
+        """
+        rev_range, limit = self.timeline._load_args[1], self.timeline._load_args[2]
+        try:
+            found = treesmod.rows(self.timeline.repo, rev_range, limit)
+        except Exception as exc:  # a worktree pruned out from under us
+            self.status = f"could not read worktrees: {exc}"
+            return
+        if len(found) < 2:
+            for row in found:
+                row.timeline.close()
+            self.status = "only one worktree here"
+            return
+
+        self.trees = found
+        self.overview = True
+        self.zoom, self.chunks = None, []
+        here = next((i for i, row in enumerate(found) if row.tree.current), 0)
+        self.cursor = here
+        self.column_at_tip = True
+        self.status = f"{len(found)} worktrees"
+
+    def leave_overview(self) -> None:
+        """Back down to the file grid, releasing the rows' timelines.
+
+        The timeline the app is already holding is never one of these — rows
+        load their own — so closing them all is safe.
+        """
+        for row in self.trees:
+            row.timeline.close()
+        self.trees = []
+        self.overview = False
+        self.cursor = 0
+        self.status = ""
+
+    def toggle_overview(self) -> None:
+        self.leave_overview() if self.overview else self.enter_overview()
+
+    @property
+    def selected_tree(self) -> treesmod.Row | None:
+        if not self.trees:
+            return None
+        return self.trees[min(self.cursor, len(self.trees) - 1)]
+
+    def move_column(self, delta: int) -> None:
+        width = self._grid_columns()
+        # While pinned, the tip is where the cursor actually is — `column` may
+        # still hold whatever it was before the pin, and a draw is what
+        # normally reconciles the two.
+        start = width - 1 if self.column_at_tip else self.column
+        self.column = max(0, min(start + delta, width - 1))
+        self.column_at_tip = self.column == width - 1
+
+    def _grid_columns(self) -> int:
+        """Width of the overview grid, remembered from the last draw.
+
+        The column cursor is in grid space, so it has to be clamped against a
+        width only the terminal knows. Before the first draw a sane default
+        keeps `enter_overview` from having to guess.
+        """
+        return max(1, getattr(self, "_last_grid_w", 60))
+
+    def tree_columns(self, row: treesmod.Row, grid_w: int) -> list[int]:
+        return treesmod.churn_columns(row.timeline, grid_w)
+
+    def _tree_detail(self) -> str:
+        """The selected tree, spelled out under the grid."""
+        row = self.selected_tree
+        if row is None:
+            return ""
+        timeline = row.timeline
+        commit = timeline.commits[
+            treesmod.column_commit(len(timeline), self._grid_columns(), self.column)
+        ]
+        # The branch is worth naming only when it is not just the directory
+        # name again, which for an agent-per-worktree layout it usually is.
+        branch = f" [{row.tree.branch}]" if row.tree.branch != row.label else ""
+        here = " · this tree" if row.tree.current else ""
+        return (
+            f"{row.label}{branch} · {len(timeline)} commits · "
+            f"{len(timeline.tracks)} files · {row.weight} lines · "
+            f"{commit.short} {commit.subject} · {_ago(commit.when)}{here}"
+        )
+
     # -- layout ----------------------------------------------------------
 
     def spans(self, grid_w: int) -> dict[int, tuple[int, int]]:
@@ -263,6 +367,9 @@ class ScrubApp:
     def draw(self, stdscr: "curses._CursesWindow") -> None:
         stdscr.erase()
         height, cols = stdscr.getmaxyx()
+        if self.overview:
+            self._draw_overview(stdscr, height, cols)
+            return
         rows = self.rows
         zoomed = self.zoom is not None
         self.ceiling = max(
@@ -316,6 +423,96 @@ class ScrubApp:
         stdscr.noutrefresh()
         curses.doupdate()
 
+    def _draw_overview(self, stdscr, height: int, cols: int) -> None:
+        """One row per worktree, each its own branch stretched to full width.
+
+        Columns are a proportion through a branch, not a moment in time: the
+        trees are on different branches of different lengths and share no
+        clock, so column 10 of one row and column 10 of another are unrelated
+        commits. The ruler is therefore unlabelled, and the detail line names
+        the actual commit under the cursor.
+        """
+        G = glyphs.active()
+        name_w = max((len(self._tree_name(r)) for r in self.trees), default=4)
+        gutters = [self._tree_gutter(row, name_w) for row in self.trees]
+        label_w = max(14, min(40, max((len(g) for g in gutters), default=14) + 1))
+        grid_w = max(8, cols - label_w - 1)
+        self._last_grid_w = grid_w
+        self.column = grid_w - 1 if self.column_at_tip else min(self.column, grid_w - 1)
+        body_h = max(1, height - 6)
+
+        self.cursor = min(self.cursor, max(0, len(self.trees) - 1))
+        if self.cursor < self.track_offset:
+            self.track_offset = self.cursor
+        elif self.cursor >= self.track_offset + body_h:
+            self.track_offset = self.cursor - body_h + 1
+
+        columns = [self.tree_columns(row, grid_w) for row in self.trees]
+        ceiling = max((max(c, default=1) for c in columns), default=1)
+
+        _put(stdscr, 0, 0, self._overview_header(), cols, STYLE_ATTR.get(ST_ACCENT, 0))
+
+        visible = range(self.track_offset, min(len(self.trees), self.track_offset + body_h))
+        last_row = 2
+        for offset, index in enumerate(visible):
+            row_y = offset + 2
+            last_row = row_y
+            selected = index == self.cursor
+            _put(stdscr, row_y, 0, _fit(gutters[index], label_w), label_w,
+                 STYLE_ATTR.get(ST_SELECTED if selected else ST_LABEL, 0))
+            for x, weight in enumerate(columns[index]):
+                if weight:
+                    step = _bucket(weight, ceiling)
+                    glyph, style = G.ramp[step], ST_RAMP + step
+                else:
+                    glyph, style = G.unchanged, ST_QUIET
+                attr = STYLE_ATTR.get(style, 0)
+                if x == self.column:
+                    attr |= curses.A_REVERSE if selected else curses.A_BOLD
+                _put(stdscr, row_y, label_w + 1 + x, glyph, 1, attr)
+
+        ruler_y = last_row + 1
+        _put(stdscr, ruler_y, label_w + 1, G.rule * grid_w, grid_w,
+             STYLE_ATTR.get(ST_ABSENT, 0))
+        _put(stdscr, ruler_y, label_w + 1 + self.column, G.caret, 1,
+             STYLE_ATTR.get(ST_ACCENT, 0))
+        # Full width, unlike the grid's clip line: this describes a whole row
+        # rather than one cell, and the tree it names is already in the gutter.
+        _put(stdscr, ruler_y + 1, 0, self._tree_detail(), cols,
+             STYLE_ATTR.get(ST_LABEL, 0))
+
+        _put(stdscr, height - 2, 0, self.status, cols, STYLE_ATTR.get(ST_ACCENT, 0))
+        _put(stdscr, height - 1, 0, self._overview_help(), cols, STYLE_ATTR.get(ST_LABEL, 0))
+        stdscr.noutrefresh()
+        curses.doupdate()
+
+    def _tree_name(self, row: treesmod.Row) -> str:
+        """The tree's directory, marked if it is the one scrub was pointed at.
+
+        A bare asterisk rather than colour alone, for the reason the churn ramp
+        carries its magnitude in the glyph as well as the hue.
+        """
+        return f"{row.label}*" if row.tree.current else row.label
+
+    def _tree_gutter(self, row: treesmod.Row, name_w: int) -> str:
+        """The left column for one tree: directory, then branch, aligned."""
+        return f"{self._tree_name(row):<{name_w}}  [{row.tree.branch}]"
+
+    def _overview_header(self) -> str:
+        churn = sum(row.weight for row in self.trees)
+        commits = sum(len(row.timeline) for row in self.trees)
+        return (
+            f"scrub  {len(self.trees)} worktrees · {commits} commits · "
+            f"{churn} lines"
+        )
+
+    def _overview_help(self) -> str:
+        G = glyphs.active()
+        return (
+            f"{G.up}{G.down} tree  {G.left}{G.right} column  "
+            f"{G.enter} open this tree  w back  r reload  * this tree  q quit"
+        )
+
     def _draw_ruler(self, stdscr, row: int, label_w: int, spans: dict[int, tuple[int, int]]) -> None:
         G = glyphs.active()
         attr = STYLE_ATTR.get(ST_ABSENT, 0)
@@ -361,7 +558,7 @@ class ScrubApp:
         return (
             f"{G.left}{G.right} commit  {G.up}{G.down} track  [ ] next change  "
             f"{G.enter} {self.default_pane}  {keys}  o order  r reload  "
-            f"{'z files' if self.zoom else 'z chunks'}  f solo  q quit"
+            f"{'z files' if self.zoom else 'z chunks'}  f solo  w trees  q quit"
         )
 
     def _header(self) -> str:
@@ -424,6 +621,9 @@ class ScrubApp:
                 return
             if key == curses.KEY_RESIZE:
                 continue
+            if self.overview:
+                self._overview_key(key)
+                continue
             if key in (curses.KEY_LEFT, "h"):
                 self.move_playhead(-1)
             elif key in (curses.KEY_RIGHT, "l"):
@@ -455,6 +655,8 @@ class ScrubApp:
                 self.toggle_solo()
             elif key == "z":
                 self.toggle_zoom()
+            elif key == "w":
+                self.toggle_overview()
             elif key in ("\n", "\r", curses.KEY_ENTER):
                 self._handoff(self.default_pane)
             elif key == "u":
@@ -465,6 +667,40 @@ class ScrubApp:
                 self._handoff("state")
             elif key == "c":
                 self._handoff("cumulative")
+
+    def _overview_key(self, key) -> None:
+        """Keys while the rows are worktrees.
+
+        A separate dispatch rather than conditionals threaded through the grid's:
+        almost nothing means the same thing at both levels, and the few keys
+        that do — quit, reload — are cheaper to repeat than to guard.
+        """
+        if key in (curses.KEY_UP, "k"):
+            self.cursor = max(0, self.cursor - 1)
+        elif key in (curses.KEY_DOWN, "j"):
+            self.cursor = min(len(self.trees) - 1, self.cursor + 1)
+        elif key in (curses.KEY_LEFT, "h"):
+            self.move_column(-1)
+        elif key in (curses.KEY_RIGHT, "l"):
+            self.move_column(1)
+        elif key == "g":
+            self.column, self.column_at_tip = 0, False
+        elif key == "G":
+            self.column_at_tip = True
+        elif key == "w":
+            self.leave_overview()
+        elif key == "r":
+            self.refresh_overview()
+
+    def refresh_overview(self) -> None:
+        """Rebuild every row, keeping the selected tree selected."""
+        was = self.selected_tree.id if self.selected_tree else None
+        self.leave_overview()
+        self.enter_overview()
+        if was is not None and self.trees:
+            self.cursor = next(
+                (i for i, row in enumerate(self.trees) if row.id == was), self.cursor
+            )
 
     def _handoff(self, pane: str) -> None:
         if not self.bridge.available:
@@ -505,6 +741,25 @@ def _bucket(weight: int, ceiling: int) -> int:
         return 0
     scaled = math.log1p(weight) / math.log1p(max(ceiling, 1))
     return min(RAMP_STEPS - 1, int(scaled * RAMP_STEPS))
+
+
+def _ago(when: str) -> str:
+    """A commit timestamp as rough elapsed time.
+
+    Which tree an agent is still writing to is the question the overview is
+    asked first, and an absolute timestamp makes the reader do the subtraction.
+    """
+    try:
+        stamp = datetime.fromisoformat(when)
+    except ValueError:
+        return ""
+    seconds = int((datetime.now(stamp.tzinfo) - stamp).total_seconds())
+    if seconds < 0:
+        return "just now"  # a clock skew between machines sharing a repo
+    for size, suffix in ((86400, "d"), (3600, "h"), (60, "m")):
+        if seconds >= size:
+            return f"{seconds // size}{suffix} ago"
+    return "just now"
 
 
 def _fit(text: str, width: int) -> str:

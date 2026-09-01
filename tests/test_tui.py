@@ -631,8 +631,211 @@ class RenderTest(unittest.TestCase):
         self.assertTrue(clip_line.startswith(" "), repr(clip_line[:8]))
 
 
+class TreeOverviewTest(unittest.TestCase):
+    """The level above the grid: one row per worktree."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.repo = self.root / "main"
+        self.repo.mkdir()
+        self.git("init", "-q", "-b", "main")
+        self.commit("base")
+
+    def git(self, *args, repo=None):
+        subprocess.run(["git", "-C", str(repo or self.repo), *args],
+                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def commit(self, message, repo=None, lines=1):
+        target = repo or self.repo
+        (target / f"{message}.py").write_text("x\n" * lines)
+        self.git("add", "-A", repo=target)
+        self.git("-c", "user.email=t@e", "-c", "user.name=T",
+                 "commit", "-q", "-m", message, repo=target)
+
+    def worktree(self, name, commits=2, lines=1):
+        path = self.root / name
+        self.git("worktree", "add", "-q", "-b", name, str(path))
+        for n in range(commits):
+            self.commit(f"{name}-{n}", repo=path, lines=lines)
+        return path
+
+    def app_on(self, repo):
+        timeline = Timeline.load(repo)
+        app = ScrubApp(timeline, EditorBridge(timeline, "/nonexistent"))
+        self.addCleanup(lambda: app.timeline.close())
+        self.addCleanup(app.leave_overview)
+        return app
+
+    def test_a_lone_worktree_reports_rather_than_opening_an_overview(self):
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        self.assertFalse(app.overview)
+        self.assertIn("one worktree", app.status)
+
+    def test_several_worktrees_each_become_a_row(self):
+        self.worktree("agent-auth")
+        self.worktree("agent-api")
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        self.assertTrue(app.overview)
+        self.assertEqual([r.label for r in app.trees], ["main", "agent-api", "agent-auth"])
+
+    def test_the_cursor_starts_on_the_tree_scrub_was_pointed_at(self):
+        linked = self.worktree("agent-auth")
+        self.worktree("agent-api")
+        app = self.app_on(linked)
+        app.enter_overview()
+        self.assertEqual(app.selected_tree.label, "agent-auth")
+
+    def test_each_row_carries_its_own_branch(self):
+        self.worktree("agent-auth", commits=3)
+        self.worktree("agent-api", commits=1)
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        by_label = {r.label: r for r in app.trees}
+        self.assertEqual(len(by_label["agent-auth"].timeline), 3)
+        self.assertEqual(len(by_label["agent-api"].timeline), 1)
+
+    def test_leaving_releases_every_row_timeline(self):
+        self.worktree("agent-auth")
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        held = [r.timeline for r in app.trees]
+        for timeline in held:
+            timeline.file_at(next(iter(timeline.tracks)), 0)  # force a batch open
+        app.leave_overview()
+        self.assertFalse(app.overview)
+        self.assertTrue(all(t._batch is None for t in held))
+
+    def test_leaving_never_closes_the_apps_own_timeline(self):
+        self.worktree("agent-auth")
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        app.leave_overview()
+        # Would raise if the overview had closed it out from under the app.
+        self.assertTrue(len(app.timeline) >= 1)
+
+    def test_the_column_parks_on_the_newest_end(self):
+        self.worktree("agent-auth")
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        self.assertTrue(app.column_at_tip)
+
+    def test_stepping_back_a_column_unpins_it_from_the_tip(self):
+        self.worktree("agent-auth")
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        app._last_grid_w = 40
+        app.move_column(-1)
+        self.assertFalse(app.column_at_tip)
+        self.assertEqual(app.column, 38)
+
+    def test_the_column_clamps_at_both_ends(self):
+        self.worktree("agent-auth")
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        app._last_grid_w = 40
+        app.move_column(-500)
+        self.assertEqual(app.column, 0)
+        app.move_column(500)
+        self.assertEqual(app.column, 39)
+        self.assertTrue(app.column_at_tip)
+
+    def test_reload_keeps_the_selected_tree(self):
+        self.worktree("agent-auth")
+        self.worktree("agent-api")
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        app.cursor = 2
+        chosen = app.selected_tree.id
+        app.refresh_overview()
+        self.assertEqual(app.selected_tree.id, chosen)
+
+    def test_reload_picks_up_a_commit_from_another_session(self):
+        linked = self.worktree("agent-auth", commits=1)
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        before = len(next(r for r in app.trees if r.label == "agent-auth").timeline)
+        self.commit("landed-elsewhere", repo=linked)
+        app.refresh_overview()
+        after = len(next(r for r in app.trees if r.label == "agent-auth").timeline)
+        self.assertEqual((before, after), (1, 2))
+
+
+class TreeOverviewRenderTest(unittest.TestCase):
+    """What the overview actually draws."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        root = Path(cls._tmp.name)
+        repo = root / "main"
+        repo.mkdir()
+
+        def git(*args, at=repo):
+            subprocess.run(["git", "-C", str(at), *args], check=True,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        def commit(message, at, lines):
+            (at / f"{message}.py").write_text("x\n" * lines)
+            git("add", "-A", at=at)
+            git("-c", "user.email=t@e", "-c", "user.name=T",
+                "commit", "-q", "-m", message, at=at)
+
+        git("init", "-q", "-b", "main")
+        commit("base", repo, 1)
+        for name, count, lines in (("agent-api", 6, 40), ("agent-docs", 1, 2)):
+            path = root / name
+            git("worktree", "add", "-q", "-b", name, str(path))
+            for n in range(count):
+                commit(f"{name}-{n}", path, lines)
+        cls.screen = _render(repo, rows=14, cols=92, overview=True)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def row(self, needle: str) -> str:
+        return next(line for line in self.screen if line.lstrip().startswith(needle))
+
+    def test_the_header_counts_trees_not_commits_of_one_branch(self):
+        self.assertIn("3 worktrees", self.screen[0])
+
+    def test_every_worktree_has_a_row(self):
+        for name in ("main", "agent-api", "agent-docs"):
+            self.row(name)
+
+    def test_a_row_names_its_branch(self):
+        self.assertIn("[agent-api]", self.row("agent-api"))
+
+    def test_the_tree_scrub_was_pointed_at_is_marked_in_text_not_colour(self):
+        self.assertIn("main*", self.row("main*"))
+
+    def test_every_row_is_drawn_to_the_same_width(self):
+        drawn = [len(self.row(n).rstrip()) for n in ("main*", "agent-api", "agent-docs")]
+        self.assertEqual(len(set(drawn)), 1, drawn)
+
+    def test_a_one_commit_branch_does_not_read_as_the_busiest(self):
+        """Summing churn per column made a short branch outweigh a long one."""
+        heavy = glyphs.UNICODE.ramp[-1]
+        self.assertNotIn(heavy, self.row("agent-docs"))
+        self.assertIn(heavy, self.row("agent-api"))
+
+    def test_the_detail_line_names_the_selected_tree_and_its_tip(self):
+        detail = next(line for line in self.screen if " commits · " in line and "files" in line)
+        self.assertIn("main", detail)
+        self.assertIn("this tree", detail)
+
+    def test_the_help_bar_names_the_way_back_down(self):
+        self.assertIn("w back", self.screen[-1])
+
+
 def _render(repo: Path, rows: int, cols: int, playhead: int | None = None,
-            default_pane: str = "diff", zoom_track: str | None = None) -> list[str]:
+            default_pane: str = "diff", zoom_track: str | None = None,
+            overview: bool = False, tree: str | None = None,
+            column: int | None = None) -> list[str]:
     """Draw one frame in a pty and return the window contents, line by line."""
     import fcntl
     import pickle
@@ -664,6 +867,14 @@ def _render(repo: Path, rows: int, cols: int, playhead: int | None = None,
                 i for i, t in enumerate(app.tracks) if zoom_track in t.label
             )
             app.toggle_zoom()
+        if overview:
+            app.enter_overview()
+            if tree is not None:
+                app.cursor = next(
+                    i for i, r in enumerate(app.trees) if tree in r.label
+                )
+            if column is not None:
+                app.column, app.column_at_tip = column, False
 
         def draw_once(stdscr):
             _init_colors()

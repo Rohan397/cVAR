@@ -175,8 +175,15 @@ class ChurnColumnTest(unittest.TestCase):
         self.assertEqual(cols[:10], [1] * 10)
         self.assertEqual(cols[10:20], [20] * 10)
 
-    def test_a_compressed_row_adds_the_commits_in_the_bucket(self):
-        self.assertEqual(trees.churn_columns(self.timeline, 1), [24])
+    def test_a_compressed_row_averages_the_commits_in_the_bucket(self):
+        # 1 + 20 + 3 lines over three commits. A sum here would make this
+        # branch read heavier than a long one whose commits are all small.
+        self.assertEqual(trees.churn_columns(self.timeline, 1), [8])
+
+    def test_a_short_branch_does_not_outweigh_a_long_one(self):
+        """The failure that made rows incomparable: stretching inflated churn."""
+        short = trees.churn_columns(self.timeline, 60)
+        self.assertEqual(max(short), 20, "a stretched column is one commit's weight")
 
     def test_an_empty_timeline_yields_a_flat_row_rather_than_raising(self):
         class Empty:
