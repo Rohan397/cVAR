@@ -21,6 +21,7 @@ MIT licensed.
 | track | one logical file, followed across renames |
 | clip | one file's change at one commit |
 | playhead | the commit index currently in view |
+| sequence | one worktree — a whole branch, collapsed to one row |
 
 A **track is a file identity, not a path**. When a branch renames or moves a
 file, the track survives and `file_at()` transparently reads whichever path was
@@ -35,6 +36,7 @@ Following one file is *soloing a track*, not a separate mode.
 python3 -m scrub /path/to/repo                # interactive scrubber
 python3 -m scrub . --range main..HEAD
 python3 -m scrub . --grid                     # print once and exit
+python3 -m scrub . --no-trees                 # skip the worktree overview
 ```
 
 | key | |
@@ -44,6 +46,7 @@ python3 -m scrub . --grid                     # print once and exit
 | `[` `]` | jump to the previous/next commit that touched this track |
 | `g` `G` | jump to the start/end of the branch |
 | `f` | solo the selected track (following one file is soloing, not a mode) |
+| `w` | step up to the worktrees, or back down |
 | `⏎` | open this commit's diff in the editor |
 | `s` | open the file as it exists at the playhead |
 | `c` | open the cumulative diff, base → playhead |
@@ -69,6 +72,48 @@ The bottom track is the commit under the playhead, given the whole width — a
 message sliced into per-commit cells is unreadable, and the one you are parked
 on is the one you want. `▼` in the ruler is what marks position instead, with
 the selected track's clip detail directly beneath.
+
+## Several sessions at once
+
+One agent per worktree is the layout this is built around, and a worktree is
+the closest thing git has to a session identity — discoverable and stable,
+unlike a running process. When a repo has more than one, scrub opens on the
+trees instead of the grid, because *which session* is then the first question:
+
+```
+scrub  4 worktrees · 19 commits · 351 lines
+
+coding-experience  [main]        ::::::::::::::::*****:::::·····*****::::::::::*****
+agent-api          [agent-api]   #################*****************#################
+agent-auth*        [agent-auth]  ###########**********##########::::::::::**********
+agent-docs         [agent-docs]  ***************************************************
+                                 ──────────────────────────────────────────────────▼
+agent-auth · 5 commits · 3 files · 157 lines · e00df21 tighten the clock skew window
+```
+
+`⏎` opens the selected tree's own grid, landing the playhead on the commit the
+column cursor was standing on — drill into a busy stretch and you arrive at
+that stretch, not at the tip. `w` steps back up. `*` marks the tree you are in.
+
+**Each row is its own branch, stretched to the full width.** Column 10 of one
+row and column 10 of another are unrelated commits: the trees are on different
+branches of different lengths and share no clock, so there is no honest way to
+put them on one axis. The ruler is unlabelled for that reason and the detail
+line names the actual commit under the cursor. A row is never scrolled — a
+branch showing only part of itself would make the shapes incomparable, which is
+the one thing they exist to be.
+
+**A column carries the churn of a typical commit in it, not the total.** Under
+a sum, a one-commit branch — whose single weight repeats across every stretched
+column — reads as heavier than a fifty-commit one, which is exactly backwards.
+
+Every tree is polled while the overview is up, not just the one you launched
+in, so work landing in another session shows up where it landed: the status bar
+says `agent-api +2`, and distinguishes an amend or rebase, where a tip moves
+without the count rising, from new commits.
+
+`--trees` and `--no-trees` override the choice of opening view in both
+directions.
 
 ## Colour
 
@@ -195,6 +240,8 @@ Measured on a 400-commit branch touching 41 files:
 | timeline load | ~180 ms (two `git log` passes, whole timeline) |
 | state pane | ~0.1 ms/frame (long-lived `git cat-file --batch`) |
 | diff pane | ~9 ms (forks `git diff-tree`) |
+| trees overview | ~75 ms for four worktrees, loaded in parallel |
+| watching four trees | ~0.9 ms/second (one ref read per tree, twice a second) |
 
 The state pane is the scrub path and is effectively free. The diff pane forks
 per request and is the thing to cache or prefetch when the TUI lands.
@@ -203,6 +250,7 @@ per request and is the thing to cache or prefetch when the TUI lands.
 
     scrub/gitio.py   plumbing wrappers, CatFileBatch, -z parsing
     scrub/model.py   Commit, Clip, Track, Timeline
+    scrub/trees.py   worktree discovery, one row per session
     scrub/tui.py     the curses scrubber
     scrub/bridge.py  editor handoff, nvim socket discovery
     scrub/nvim_open.lua  what the RPC runs inside nvim
@@ -213,8 +261,9 @@ per request and is the thing to cache or prefetch when the TUI lands.
 ## Tests
 
 ```sh
-python3 tests/test_timeline.py   # model, 15 tests
-python3 tests/test_tui.py        # navigation, layout, bridges, rendering, 59
+python3 tests/test_timeline.py   # model, 18 tests
+python3 tests/test_trees.py      # worktree discovery, column fitting, 24
+python3 tests/test_tui.py        # navigation, layout, bridges, rendering, 183
 ```
 
 `test_tui.py` uses a fake editor that records its argv rather than opening
