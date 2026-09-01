@@ -637,7 +637,9 @@ class TreeOverviewTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        # Resolved: git reports worktree paths resolved, and on macOS the
+        # temp dir is reached through a /var -> /private/var symlink.
+        self.root = Path(self.tmp.name).resolve()
         self.repo = self.root / "main"
         self.repo.mkdir()
         self.git("init", "-q", "-b", "main")
@@ -762,6 +764,98 @@ class TreeOverviewTest(unittest.TestCase):
         app.refresh_overview()
         after = len(next(r for r in app.trees if r.label == "agent-auth").timeline)
         self.assertEqual((before, after), (1, 2))
+
+
+class TreeDrillInTest(TreeOverviewTest):
+    """Entering a tree from the overview and coming back up."""
+
+    def opened(self, repo=None, tree="agent-auth", column=None):
+        app = self.app_on(repo or self.repo)
+        app.enter_overview()
+        app._last_grid_w = 40
+        app.cursor = next(i for i, r in enumerate(app.trees) if r.label == tree)
+        if column is not None:
+            app.column, app.column_at_tip = column, False
+        app.open_selected_tree()
+        return app
+
+    def test_entering_a_tree_swaps_in_its_branch(self):
+        self.worktree("agent-auth", commits=3)
+        app = self.opened()
+        self.assertFalse(app.overview)
+        self.assertEqual(len(app.timeline), 3)
+        self.assertEqual(app.timeline.repo, self.root / "agent-auth")
+
+    def test_the_bridge_follows_the_tree_that_was_opened(self):
+        self.worktree("agent-auth", commits=3)
+        app = self.opened()
+        self.assertIs(app.bridge.timeline, app.timeline)
+        # Would raise off the end of the old branch, or on a closed cat-file.
+        app.bridge.open_state(app.selected.id, app.playhead)
+
+    def test_a_handoff_reads_the_opened_trees_files(self):
+        self.worktree("agent-auth", commits=2)
+        app = self.opened()
+        blob = app.timeline.file_at(app.selected.id, app.playhead)
+        self.assertIsNotNone(blob)
+
+    def test_entering_lands_on_the_column_that_was_selected(self):
+        self.worktree("agent-auth", commits=4)
+        app = self.opened(column=0)
+        self.assertEqual(app.playhead, 0)
+        self.assertFalse(app.follow)
+
+    def test_entering_at_the_tip_resumes_following(self):
+        self.worktree("agent-auth", commits=4)
+        app = self.opened()
+        self.assertEqual(app.playhead, len(app.timeline) - 1)
+        self.assertTrue(app.follow)
+
+    def test_the_other_rows_are_released_but_not_the_one_opened(self):
+        self.worktree("agent-auth", commits=2)
+        self.worktree("agent-api", commits=2)
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        rows = {r.label: r.timeline for r in app.trees}
+        for timeline in rows.values():
+            timeline.file_at(next(iter(timeline.tracks)), 0)  # open every batch
+        app.cursor = next(i for i, r in enumerate(app.trees) if r.label == "agent-auth")
+        app.open_selected_tree()
+
+        self.assertIs(app.timeline, rows["agent-auth"])
+        self.assertIsNotNone(rows["agent-auth"]._batch, "the opened tree was closed")
+        self.assertIsNone(rows["agent-api"]._batch)
+        self.assertIsNone(rows["main"]._batch)
+
+    def test_reloading_after_entering_follows_the_new_tree(self):
+        linked = self.worktree("agent-auth", commits=2)
+        app = self.opened()
+        self.commit("later", repo=linked)
+        app.refresh()
+        self.assertEqual(len(app.timeline), 3)
+        self.assertEqual(app.timeline.repo, self.root / "agent-auth")
+
+    def test_going_back_up_puts_the_cursor_on_the_tree_just_left(self):
+        self.worktree("agent-auth", commits=2)
+        self.worktree("agent-api", commits=2)
+        app = self.opened(tree="agent-api")
+        app.enter_overview()
+        self.assertEqual(app.selected_tree.label, "agent-api")
+
+    def test_zoom_and_solo_do_not_survive_the_switch(self):
+        self.worktree("agent-auth", commits=2)
+        app = self.app_on(self.repo)
+        app.toggle_solo()
+        app.enter_overview()
+        app.cursor = next(i for i, r in enumerate(app.trees) if r.label == "agent-auth")
+        app.open_selected_tree()
+        self.assertIsNone(app.solo)
+        self.assertIsNone(app.zoom)
+
+    def test_the_watched_tip_switches_to_the_opened_tree(self):
+        linked = self.worktree("agent-auth", commits=2)
+        app = self.opened()
+        self.assertEqual(app.tip, watch.tip(linked))
 
 
 class TreeOverviewRenderTest(unittest.TestCase):

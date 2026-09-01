@@ -284,19 +284,68 @@ class ScrubApp:
     def toggle_overview(self) -> None:
         self.leave_overview() if self.overview else self.enter_overview()
 
+    def open_selected_tree(self) -> None:
+        """Drop into the selected worktree's own grid.
+
+        The row's timeline is adopted rather than reloaded — it is already the
+        branch being asked for — and every other row is released. The playhead
+        lands on the commit the column cursor was standing on, so drilling into
+        a busy stretch opens at that stretch rather than at the tip.
+        """
+        row = self.selected_tree
+        if row is None:
+            return
+
+        adopted = row.timeline
+        landing = treesmod.column_commit(
+            len(adopted), self._grid_columns(), self.current_column
+        )
+        for other in self.trees:
+            if other.timeline is not adopted:
+                other.timeline.close()
+        # The timeline the app arrived with is not one of the rows, so it is
+        # still open and still ours to close.
+        if self.timeline is not adopted:
+            self.timeline.close()
+
+        self.timeline = adopted
+        # Same reason as refresh(): the bridge holds its own reference, and a
+        # handoff through the old one would read a closed cat-file.
+        self.bridge.timeline = adopted
+        self.trees = []
+        self.overview = False
+
+        self.playhead = landing
+        self.follow = landing == len(adopted) - 1
+        self.cursor = 0
+        self.track_offset = 0
+        self.commit_offset = 0
+        self.solo = None
+        self.zoom, self.chunks = None, []
+        self.tip = watch.tip(adopted.repo)
+        self.status = f"{row.label} · {row.tree.branch}"
+
     @property
     def selected_tree(self) -> treesmod.Row | None:
         if not self.trees:
             return None
         return self.trees[min(self.cursor, len(self.trees) - 1)]
 
+    @property
+    def current_column(self) -> int:
+        """Where the column cursor actually is.
+
+        `column` is only a stored number; while pinned to the tip the real
+        position is the last column, which depends on a width the terminal
+        owns. Every reader goes through here so the two cannot drift — reading
+        the raw field is what made drilling in land on column zero.
+        """
+        width = self._grid_columns()
+        return width - 1 if self.column_at_tip else max(0, min(self.column, width - 1))
+
     def move_column(self, delta: int) -> None:
         width = self._grid_columns()
-        # While pinned, the tip is where the cursor actually is — `column` may
-        # still hold whatever it was before the pin, and a draw is what
-        # normally reconciles the two.
-        start = width - 1 if self.column_at_tip else self.column
-        self.column = max(0, min(start + delta, width - 1))
+        self.column = max(0, min(self.current_column + delta, width - 1))
         self.column_at_tip = self.column == width - 1
 
     def _grid_columns(self) -> int:
@@ -318,7 +367,7 @@ class ScrubApp:
             return ""
         timeline = row.timeline
         commit = timeline.commits[
-            treesmod.column_commit(len(timeline), self._grid_columns(), self.column)
+            treesmod.column_commit(len(timeline), self._grid_columns(), self.current_column)
         ]
         # The branch is worth naming only when it is not just the directory
         # name again, which for an agent-per-worktree layout it usually is.
@@ -438,7 +487,7 @@ class ScrubApp:
         label_w = max(14, min(40, max((len(g) for g in gutters), default=14) + 1))
         grid_w = max(8, cols - label_w - 1)
         self._last_grid_w = grid_w
-        self.column = grid_w - 1 if self.column_at_tip else min(self.column, grid_w - 1)
+        self.column = self.current_column
         body_h = max(1, height - 6)
 
         self.cursor = min(self.cursor, max(0, len(self.trees) - 1))
@@ -510,7 +559,7 @@ class ScrubApp:
         G = glyphs.active()
         return (
             f"{G.up}{G.down} tree  {G.left}{G.right} column  "
-            f"{G.enter} open this tree  w back  r reload  * this tree  q quit"
+            f"{G.enter} open this tree  w back  r reload  * you are here  q quit"
         )
 
     def _draw_ruler(self, stdscr, row: int, label_w: int, spans: dict[int, tuple[int, int]]) -> None:
@@ -689,6 +738,8 @@ class ScrubApp:
             self.column_at_tip = True
         elif key == "w":
             self.leave_overview()
+        elif key in ("\n", "\r", curses.KEY_ENTER):
+            self.open_selected_tree()
         elif key == "r":
             self.refresh_overview()
 
