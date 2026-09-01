@@ -96,3 +96,58 @@ def load(tree: Tree, rev_range: str | None, limit: int | None) -> Timeline | Non
         timeline.close()
         return None
     return timeline
+
+
+# -- overview rows -------------------------------------------------------
+
+
+def commit_churn(timeline: Timeline) -> list[int]:
+    """Lines changed at each commit, summed across every track."""
+    totals = [0] * len(timeline)
+    for track in timeline.tracks.values():
+        for index, clip in track.clips.items():
+            totals[index] += clip.weight
+    return totals
+
+
+def column_range(total: int, width: int, column: int) -> range:
+    """The commits one column of an overview row stands for.
+
+    Two regimes, one rule. A branch shorter than the grid stretches, each
+    commit painted across several columns exactly as the main grid does it. A
+    branch longer than the grid compresses, a column standing for the commits
+    that fall inside it.
+
+    There is deliberately no third regime where the row scrolls. Rows here are
+    different branches of different lengths, and a row that showed only part of
+    its branch would make the shapes incomparable — which is the one thing the
+    overview is for.
+    """
+    start = column * total // width
+    # The upper bound collapses to the lower one whenever a commit spans more
+    # than a column; a column always stands for at least the commit it starts on.
+    return range(start, max((column + 1) * total // width, start + 1))
+
+
+def churn_columns(timeline: Timeline, width: int) -> list[int]:
+    """One row's worth of churn, bucketed into `width` columns."""
+    total = len(timeline)
+    if total == 0 or width <= 0:
+        return [0] * max(width, 0)
+    churn = commit_churn(timeline)
+    return [
+        sum(churn[i] for i in column_range(total, width, x)) for x in range(width)
+    ]
+
+
+def column_commit(total: int, width: int, column: int) -> int:
+    """Which commit to land on when a column is drilled into.
+
+    The newest in the bucket: a column standing for several commits is a
+    summary of what happened across them, and the state at the end of it is
+    what the reader is being shown.
+    """
+    if total <= 0:
+        return 0
+    covered = column_range(total, width, max(0, min(column, width - 1)))
+    return min(covered[-1], total - 1)

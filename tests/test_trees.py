@@ -106,5 +106,86 @@ class DiscoveryTest(unittest.TestCase):
         self.assertIsNone(trees.load(by_label["agent-auth"], "main..HEAD", None))
 
 
+class ColumnTest(unittest.TestCase):
+    """Fitting a whole branch into a fixed number of columns, never scrolled."""
+
+    WIDTH = 32
+
+    def cols(self, total):
+        return [list(trees.column_range(total, self.WIDTH, x)) for x in range(self.WIDTH)]
+
+    def test_no_commit_is_ever_dropped(self):
+        for total in (1, 2, 4, 31, 32, 33, 100, 401):
+            covered = sorted({i for c in self.cols(total) for i in c})
+            self.assertEqual(covered, list(range(total)), f"total={total}")
+
+    def test_a_short_branch_stretches_one_commit_across_several_columns(self):
+        widths = [len(c) for c in self.cols(4)]
+        self.assertEqual(set(widths), {1}, "a stretched column stands for one commit")
+        self.assertEqual([c[0] for c in self.cols(4)][:9], [0] * 8 + [1])
+
+    def test_a_long_branch_compresses_several_commits_into_one_column(self):
+        self.assertEqual(self.cols(100)[0], [0, 1, 2])
+
+    def test_columns_are_contiguous_and_ordered(self):
+        for total in (4, 100):
+            flat = [i for c in self.cols(total) for i in c]
+            self.assertEqual(flat, sorted(flat))
+
+    def test_the_last_column_always_reaches_the_tip(self):
+        for total in (1, 4, 32, 100, 401):
+            self.assertEqual(
+                trees.column_commit(total, self.WIDTH, self.WIDTH - 1), total - 1
+            )
+
+    def test_drilling_a_column_lands_on_its_newest_commit(self):
+        # Column 0 of a 100-commit branch stands for commits 0-2; the state
+        # being summarised is the one at the end of it.
+        self.assertEqual(trees.column_commit(100, self.WIDTH, 0), 2)
+
+    def test_a_column_past_the_end_clamps_rather_than_raising(self):
+        self.assertEqual(trees.column_commit(10, self.WIDTH, 999), 9)
+        self.assertEqual(trees.column_commit(10, self.WIDTH, -5), 0)
+
+
+class ChurnColumnTest(unittest.TestCase):
+    """Churn per column, the value the ramp glyph is chosen from."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.repo = Path(self.tmp.name) / "repo"
+        self.repo.mkdir()
+        run = lambda *a: subprocess.run(["git", "-C", str(self.repo), *a],
+                                        check=True, stdout=subprocess.DEVNULL)
+        run("init", "-q", "-b", "main")
+        for n, lines in enumerate([1, 20, 3]):
+            (self.repo / f"f{n}.py").write_text("x\n" * lines)
+            run("add", "-A")
+            run("-c", "user.email=t@e", "-c", "user.name=T", "commit", "-q", "-m", f"c{n}")
+        from scrub.model import Timeline
+        self.timeline = Timeline.load(self.repo)
+        self.addCleanup(self.timeline.close)
+
+    def test_per_commit_churn_sums_every_track(self):
+        self.assertEqual(trees.commit_churn(self.timeline), [1, 20, 3])
+
+    def test_a_stretched_row_repeats_each_commits_weight(self):
+        cols = trees.churn_columns(self.timeline, 30)
+        self.assertEqual(cols[:10], [1] * 10)
+        self.assertEqual(cols[10:20], [20] * 10)
+
+    def test_a_compressed_row_adds_the_commits_in_the_bucket(self):
+        self.assertEqual(trees.churn_columns(self.timeline, 1), [24])
+
+    def test_an_empty_timeline_yields_a_flat_row_rather_than_raising(self):
+        class Empty:
+            commits: list = []
+            tracks: dict = {}
+            def __len__(self):
+                return 0
+        self.assertEqual(trees.churn_columns(Empty(), 4), [0, 0, 0, 0])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
