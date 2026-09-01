@@ -121,6 +121,28 @@ class TimelineTest(unittest.TestCase):
         track = self.track("app.py")
         self.assertEqual(sorted(track.clips), [5])
 
+    def test_loading_a_timeline_forks_no_cat_file(self):
+        """The trees overview loads one timeline per worktree only to draw it."""
+        fresh = Timeline.load(self.repo)
+        try:
+            self.assertIsNone(fresh._batch)
+        finally:
+            fresh.close()
+
+    def test_the_first_blob_read_opens_the_batch(self):
+        fresh = Timeline.load(self.repo)
+        try:
+            track = next(t for t in fresh.track_order() if "app.py" in t.label)
+            self.assertIsNotNone(fresh.file_at(track.id, 5))
+            self.assertIsNotNone(fresh._batch)
+        finally:
+            fresh.close()
+
+    def test_closing_an_unread_timeline_is_harmless(self):
+        fresh = Timeline.load(self.repo)
+        fresh.close()
+        fresh.close()
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
