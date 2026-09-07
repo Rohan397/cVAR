@@ -20,7 +20,7 @@ import math
 from datetime import datetime
 
 from . import chunks as chunkmod
-from . import glyphs, watch
+from . import glyphs, termfix, watch
 from . import trees as treesmod
 from .bridge import EditorBridge
 from .model import Timeline, Track
@@ -944,6 +944,11 @@ def launch(
     # curses encodes output through the C locale, so the ramp glyphs and box
     # drawing come out as garbage unless this is set first.
     locale.setlocale(locale.LC_ALL, "")
+
+    # And the grid is mostly long runs of one character, which is exactly the
+    # case the system ncurses gets wrong. Must happen before curses reads the
+    # terminal description.
+    termfix.disable_rep()
 
     bridge = EditorBridge(timeline, editor, server)
     app = ScrubApp(timeline, bridge, default_pane)
