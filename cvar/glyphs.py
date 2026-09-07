@@ -89,6 +89,11 @@ def test_card() -> str:
         "Any of these showing as '?' is missing from your terminal font.",
         "Run with --ascii (or export CVAR_ASCII=1) to draw without them.",
         "",
+        "If these all look right but a LONG RUN of one character comes out as",
+        "'?' in the grid, that is not the font — it is the ncurses repeat",
+        "optimisation mangling multibyte output. Run --doctor; cvar works",
+        "around it automatically.",
+        "",
     ]
     for name, chars in ((n, c) for n, c, _ in rows):
         points = " ".join(f"U+{ord(c):04X}" for c in chars)

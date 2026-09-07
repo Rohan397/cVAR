@@ -12,6 +12,7 @@ import shutil
 from pathlib import Path
 
 from . import bridge as _bridge
+from . import termfix
 from .bridge import EditorBridge, _relatedness, nvim_sockets, socket_cwd
 from .model import Timeline
 
@@ -49,6 +50,16 @@ def report(timeline: Timeline, editor: str | None, server: str | None) -> str:
         ]
         if made.server:
             lines.append(f"nvim socket {made.server}")
+
+        # Reported on a copy: asking what would happen must not change what
+        # this process is running with.
+        blocked = termfix.disable_rep(dict(os.environ))
+        lines.append(
+            f"glyph runs  patched terminfo   [ncurses rep disabled, so long "
+            f"runs of one glyph survive]"
+            if blocked is None else
+            f"glyph runs  system terminfo    [{blocked}]"
+        )
 
         probe = shutil.which("nvim")
         lines += ["", "nvim sockets on this machine:"]
