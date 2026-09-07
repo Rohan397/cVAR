@@ -1473,6 +1473,73 @@ class LiveFileTest(BridgeTest):
         self.assertIn("opened", self.bridge.open_state(self.track.id, 3))
 
 
+class EditKeyTest(unittest.TestCase):
+    """`e` parks the playhead at the tip, then hands over the live file."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.repo = build(Path(cls._tmp.name) / "repo")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def setUp(self):
+        self.timeline = Timeline.load(self.repo)
+        self.addCleanup(self.timeline.close)
+        editor_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(editor_dir.cleanup)
+        self.editor = FakeEditor(Path(editor_dir.name))
+        self.bridge = EditorBridge(self.timeline, str(self.editor.path))
+        self.addCleanup(self.bridge.close)
+        self.app = ScrubApp(self.timeline, self.bridge)
+
+    def test_it_moves_the_playhead_to_the_tip(self):
+        self.app.playhead = 2
+        self.app.follow = False
+        self.app.edit_live()
+        self.assertEqual(self.app.playhead, len(self.timeline) - 1)
+
+    def test_it_re_arms_following(self):
+        self.app.playhead = 2
+        self.app.follow = False
+        self.app.edit_live()
+        self.assertTrue(self.app.follow)
+
+    def test_it_hands_over_a_file_in_the_repo(self):
+        self.app.playhead = 1
+        self.app.edit_live()
+        self.assertIn("editing", self.app.status)
+
+    def test_a_zoomed_region_is_rebuilt_at_the_tip(self):
+        # Zoom somewhere in the past, then edit: the chunks must be recomputed,
+        # or the handoff jumps to a line number from the old revision.
+        self.app.playhead = 3
+        self.app.toggle_zoom()
+        if self.app.zoom is None:
+            self.skipTest("selected track has no chunks at this commit")
+        before = list(self.app.chunks)
+        self.app.edit_live()
+        self.assertEqual(self.app.playhead, len(self.timeline) - 1)
+        self.assertIsNotNone(self.app.zoom)
+        self.assertNotEqual(before, self.app.chunks)
+
+    def test_the_zoomed_row_stays_selected_across_the_jump(self):
+        self.app.playhead = 3
+        self.app.toggle_zoom()
+        if self.app.zoom is None:
+            self.skipTest("selected track has no chunks at this commit")
+        zoomed = self.app.zoom
+        self.app.edit_live()
+        self.assertEqual(self.app.zoom, zoomed)
+        self.assertLess(self.app.cursor, max(len(self.app.chunks), 1))
+
+    def test_an_empty_timeline_does_not_crash(self):
+        self.app.timeline.tracks.clear()
+        self.app.edit_live()  # must simply do nothing
+
+
 class LiveEditableTest(unittest.TestCase):
     """The editable flag has to survive into each transport."""
 

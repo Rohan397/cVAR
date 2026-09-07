@@ -179,6 +179,32 @@ class ScrubApp:
         # Stepping away from the tip means you are reading, not watching.
         self.follow = self.playhead == len(self.timeline) - 1
 
+    def edit_live(self) -> None:
+        """Open the working-tree file, after parking the playhead at the tip.
+
+        Editing is always against what is checked out, so leaving the playhead
+        in the past would put the grid and the buffer on different revisions —
+        and a zoomed region's line number, which is a playhead coordinate,
+        would point at a line that means something else in the file being
+        typed into. Moving to the tip first makes both agree.
+        """
+        if not self.timeline.tracks:
+            return
+        zoomed, chunk = self.zoom, self.cursor
+        self.playhead = len(self.timeline) - 1
+        self.follow = True
+        if zoomed is not None:
+            # Rebuild at the tip: chunks were projected into the coordinates of
+            # the commit we just left.
+            self.zoom, self.chunks = None, []
+            self.cursor = next(
+                (i for i, track in enumerate(self.tracks) if track.id == zoomed), 0
+            )
+            self.toggle_zoom()
+            if self.chunks:
+                self.cursor = min(chunk, len(self.chunks) - 1)
+        self._handoff("live")
+
     def move_cursor(self, delta: int) -> None:
         self.cursor = max(0, min(self.cursor + delta, len(self.rows) - 1))
 
@@ -601,7 +627,8 @@ class ScrubApp:
         keys = "  ".join(
             f"{key} {name}"
             for key, name in (
-                ("u", "unified"), ("d", "split"), ("s", "state"), ("c", "cumul")
+                ("u", "unified"), ("d", "split"), ("s", "state"),
+                ("c", "cumul"), ("e", "edit"),
             )
         )
         return (
@@ -723,6 +750,8 @@ class ScrubApp:
                 self._handoff("state")
             elif key == "c":
                 self._handoff("cumulative")
+            elif key == "e":
+                self.edit_live()
 
     def _overview_key(self, key) -> None:
         """Keys while the rows are worktrees.
@@ -803,6 +832,7 @@ class ScrubApp:
             "diff": self.bridge.open_diff,
             "state": self.bridge.open_state,
             "cumulative": self.bridge.open_cumulative,
+            "live": self.bridge.open_live,
         }[pane]
         # Zoomed in, the handoff lands on the region you selected rather
         # than the top of the file — that is the point of zooming.
