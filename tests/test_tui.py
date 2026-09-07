@@ -1377,6 +1377,58 @@ class UnifiedDiffTest(unittest.TestCase):
         self.assertIsNone(bridge_mod._diff_line_for("@@ -1 +1 @@\n ctx\n", 9999))
 
 
+class UnifiedFallbackTest(BridgeTest):
+    """Enter on a commit that left the file alone still shows the file.
+
+    Most commits touch none of any given track, so an empty diff is the
+    ordinary case; refusing to open anything reads as the tool being broken.
+    """
+
+    def _untouched_index(self) -> int:
+        return next(
+            i for i in range(len(self.timeline))
+            if self.timeline.file_at(self.track.id, i) is not None
+            and not self.timeline.diff_at(self.track.id, i).strip()
+        )
+
+    def test_unchanged_commit_opens_the_file_instead(self):
+        index = self._untouched_index()
+        message = self.bridge.open_unified(self.track.id, index)
+        self.assertIn("unchanged here", message)
+        launch = self.wait_for_launch()[0]
+        self.assertIn("--goto", launch)
+        self.assertNotIn(".diff", launch)
+
+    def test_the_buffer_holds_the_file_not_a_diff(self):
+        index = self._untouched_index()
+        self.bridge.open_unified(self.track.id, index)
+        launch = self.wait_for_launch()[0]
+        opened = Path(launch.split()[-1].rsplit(":", 1)[0])
+        self.assertEqual(
+            opened.read_bytes(), self.timeline.file_at(self.track.id, index)
+        )
+
+    def test_a_commit_that_did_change_it_still_opens_a_diff(self):
+        touched = next(iter(sorted(self.track.clips)))
+        message = self.bridge.open_unified(self.track.id, touched)
+        self.assertNotIn("unchanged here", message)
+        self.assertIn(".diff", self.wait_for_launch()[0])
+
+    def test_absent_file_says_so_rather_than_opening_an_empty_buffer(self):
+        # A track the branch has not created yet: there is no diff *and*
+        # nothing to fall back to, so the honest answer is to say so.
+        track = next(
+            t for t in self.timeline.track_order() if "test_auth" in t.label
+        )
+        absent = next(
+            i for i in range(len(self.timeline))
+            if self.timeline.file_at(track.id, i) is None
+        )
+        message = self.bridge.open_unified(track.id, absent)
+        self.assertEqual(message, "file does not exist at this commit")
+        self.assertEqual(self.editor.launches(), [])
+
+
 class OrderTest(unittest.TestCase):
     """Row ordering. Default puts the live files at the top."""
 

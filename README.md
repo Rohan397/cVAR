@@ -47,7 +47,7 @@ python3 -m scrub . --no-trees                 # skip the worktree overview
 | `g` `G` | jump to the start/end of the branch |
 | `f` | solo the selected track (following one file is soloing, not a mode) |
 | `w` | step up to the worktrees, or back down |
-| `⏎` | open this commit's diff in the editor |
+| `⏎` | open this commit's diff, or the file itself if it was untouched |
 | `s` | open the file as it exists at the playhead |
 | `c` | open the cumulative diff, base → playhead |
 | `q` | quit |
@@ -218,7 +218,9 @@ resolve is reported rather than silently substituted.
 
 Three views of the same track, all anchored to the playhead:
 
-- `diff` (`⏎`) — what this one commit did to the file.
+- `diff` (`⏎`) — what this one commit did to the file. Most commits leave
+  any given file alone, so when there is no change here it opens the file
+  at the playhead instead of refusing.
 - `state` (`s`) — the file as it exists at the playhead. The video-editor
   default: you see the frame, not the delta.
 - `cumulative` (`c`) — everything the branch did to this file from base to

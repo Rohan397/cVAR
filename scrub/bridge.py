@@ -296,7 +296,13 @@ class EditorBridge:
         """
         text = self.timeline.diff_at(track_id, index)
         if not text.strip():
-            return "nothing changed here"
+            # Most commits leave any given file alone, so landing on an empty
+            # diff is the common case rather than the exception. The ask was
+            # "show me this file"; refusing to open anything answers a
+            # different question. Fall through to the file itself.
+            if self.timeline.file_at(track_id, index) is None:
+                return "file does not exist at this commit"
+            return f"unchanged here — {self.open_state(track_id, index, line)}"
         short = self.timeline.commits[index].short
         source = Path(self._path_at(track_id, index))
         path = self._dir / f"{source.stem}@{short}.diff"
