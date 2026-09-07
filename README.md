@@ -8,7 +8,7 @@ consistent, well formatted, and occasionally wrong in ways a diff hides. cVAR
 is the review room: step through a branch commit by commit, see which files
 churned and when, and hand any frame to your editor to actually read.
 
-The command is `scrub`, because that is the verb.
+The command is `cvar`. Scrubbing is the verb; cVAR is the thing.
 
 Stdlib-only Python, no dependencies. Backend is git's plumbing layer.
 MIT licensed.
@@ -33,10 +33,10 @@ Following one file is *soloing a track*, not a separate mode.
 ## Try it
 
 ```sh
-python3 -m scrub /path/to/repo                # interactive scrubber
-python3 -m scrub . --range main..HEAD
-python3 -m scrub . --grid                     # print once and exit
-python3 -m scrub . --no-trees                 # skip the worktree overview
+cvar /path/to/repo                # interactive scrubber
+cvar . --range main..HEAD
+cvar . --grid                     # print once and exit
+cvar . --no-trees                 # skip the worktree overview
 ```
 
 | key | |
@@ -57,7 +57,7 @@ wide clips rather than huddling in the left corner. Only when commits outnumber
 columns does it fall back to one column each and scroll.
 
 ```
-scrub  4/8 commits · 4 tracks · 41 lines
+cvar  4/8 commits · 4 tracks · 41 lines
 
 src/authentication.py  ▓▓▓▓▓▓▓▓▓██████████·········░░░░░░░░░░██████████···················██████████
 tests/test_auth.py                        █████████·······································██████████
@@ -77,11 +77,11 @@ the selected track's clip detail directly beneath.
 
 One agent per worktree is the layout this is built around, and a worktree is
 the closest thing git has to a session identity — discoverable and stable,
-unlike a running process. When a repo has more than one, scrub opens on the
+unlike a running process. When a repo has more than one, cvar opens on the
 trees instead of the grid, because *which session* is then the first question:
 
 ```
-scrub  4 worktrees · 19 commits · 351 lines
+cvar  4 worktrees · 19 commits · 351 lines
 
 coding-experience  [main]        ::::::::::::::::*****:::::·····*****::::::::::*****
 agent-api          [agent-api]   #################*****************#################
@@ -166,24 +166,24 @@ tooling and the one that needs no setup:
 
 ```sh
 export EDITOR=nvim
-python3 -m scrub /path/to/repo     # ⏎ opens nvim diff, :qa returns to the grid
+cvar /path/to/repo     # ⏎ opens nvim diff, :qa returns to the grid
 ```
 
 **`remote`** — nvim over RPC, for a persistent side-by-side. This is the mode
-for the two-pane layout: nvim in one terminal pane, scrub in another. **No
-setup and no flags** — nvim already listens on a socket by default, so scrub
+for the two-pane layout: nvim in one terminal pane, cvar in another. **No
+setup and no flags** — nvim already listens on a socket by default, so cvar
 finds the one editing this repo:
 
 ```sh
 nvim .                       # pane 1, exactly as you already start it
-python3 -m scrub .           # pane 2
+cvar .                       # pane 2
 ```
 
 Discovery globs `$TMPDIR/nvim.$USER/*/nvim.<pid>.0` and asks each live nvim for
 its `getcwd()`, then ranks by how closely that matches the repo. Ranking, not
 first-match: an nvim opened at `$HOME` is an ancestor of every project and
 would otherwise swallow handoffs meant for a nested one. Unrelated nvims are
-never candidates. `--nvim-server <path>` overrides; `$NVIM` is used when scrub
+never candidates. `--nvim-server <path>` overrides; `$NVIM` is used when cvar
 runs inside nvim's own `:terminal`.
 
 Each handoff reuses **one tab** rather than opening a new one — thirty presses
@@ -191,7 +191,7 @@ of `⏎` leave one diff tab, not thirty — and the rest of the layout is
 untouched. The split is `vertical rightbelow`, or the user's `splitright`
 setting would decide which revision lands where and silently invert the diff.
 
-The behavior lives in `scrub/nvim_open.lua`, rewritten with the current request
+The behavior lives in `cvar/nvim_open.lua`, rewritten with the current request
 and executed over RPC. A `--remote-send` keystroke string cannot reuse a tab,
 restore focus, or tell a terminal window from an editor one.
 
@@ -202,7 +202,7 @@ restore focus, or tell a terminal window from an editor one.
 
 Configuration beats evidence beats installed software:
 
-1. `$SCRUB_EDITOR`
+1. `$CVAR_EDITOR`
 2. `$NVIM` — you are inside nvim's `:terminal` already
 3. `$VISUAL` / `$EDITOR`
 4. **a live nvim editing this repo** — found by socket discovery
@@ -250,14 +250,14 @@ per request and is the thing to cache or prefetch when the TUI lands.
 
 ## Layout
 
-    scrub/gitio.py   plumbing wrappers, CatFileBatch, -z parsing
-    scrub/model.py   Commit, Clip, Track, Timeline
-    scrub/trees.py   worktree discovery, one row per session
-    scrub/tui.py     the curses scrubber
-    scrub/bridge.py  editor handoff, nvim socket discovery
-    scrub/nvim_open.lua  what the RPC runs inside nvim
-    scrub/render.py  static ASCII grid for --grid and pipes
-    scrub/cli.py     python -m scrub
+    cvar/gitio.py   plumbing wrappers, CatFileBatch, -z parsing
+    cvar/model.py   Commit, Clip, Track, Timeline
+    cvar/trees.py   worktree discovery, one row per session
+    cvar/tui.py     the curses scrubber
+    cvar/bridge.py  editor handoff, nvim socket discovery
+    cvar/nvim_open.lua  what the RPC runs inside nvim
+    cvar/render.py  static ASCII grid for --grid and pipes
+    cvar/cli.py     the cvar entry point
     tests/           make_fixture.py builds an agent-shaped repo
 
 ## Tests
