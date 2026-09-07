@@ -50,6 +50,7 @@ cvar . --no-trees                 # skip the worktree overview
 | `⏎` | open this commit's diff, or the file itself if it was untouched |
 | `s` | open the file as it exists at the playhead |
 | `c` | open the cumulative diff, base → playhead |
+| `e` | jump to the tip and open the real file, editable |
 | `q` | quit |
 
 The timeline stretches to fill the terminal, so a short branch spreads into
@@ -226,6 +227,20 @@ Three views of the same track, all anchored to the playhead:
 - `cumulative` (`c`) — everything the branch did to this file from base to
   playhead. Usually the most useful for review, since it skips the churn where
   an agent wrote something and rewrote it three commits later.
+
+All three stage a copy of the revision under a temp path and open it read-only:
+they are for reading, and a buffer you can type into but never save is a trap.
+
+`e` is the exception, and the way out of the review room. It moves the playhead
+to the tip, then opens the **actual file in the working tree**, unlocked — so
+the thing you were reading becomes the thing you are editing without leaving
+the grid. The jump to the tip is not a convenience: the working tree is the
+newest revision, so editing against anything else would put the buffer and the
+timeline on different versions of the file. It also makes a zoomed region's
+line number mean the same thing in both, which is why `e` from a chunk lands on
+that chunk.
+
+A file the branch deleted says so rather than opening an empty buffer.
 
 ## Ranges
 
