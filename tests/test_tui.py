@@ -1429,6 +1429,64 @@ class UnifiedFallbackTest(BridgeTest):
         self.assertEqual(self.editor.launches(), [])
 
 
+class LiveFileTest(BridgeTest):
+    """`open_live` hands over the file in the repo, not a staged revision."""
+
+    def test_it_opens_the_path_inside_the_repo(self):
+        self.bridge.open_live(self.track.id, 3)
+        opened = Path(self.wait_for_launch()[0].split()[-1])
+        self.assertTrue(
+            opened.is_relative_to(Path(self.repo)),
+            f"{opened} is not in the working tree",
+        )
+
+    def test_it_is_the_working_copy_not_a_snapshot(self):
+        self.bridge.open_live(self.track.id, 0)
+        opened = Path(self.wait_for_launch()[0].split()[-1])
+        live = Path(self.repo) / self.track.label
+        self.assertEqual(opened, live)
+        self.assertEqual(opened.read_bytes(), live.read_bytes())
+
+    def test_the_path_is_the_one_at_the_tip_not_at_the_index(self):
+        # This track was renamed mid-branch; the working tree only has the
+        # newest name, so an old index must not resolve to the old path.
+        self.bridge.open_live(self.track.id, 0)
+        opened = Path(self.wait_for_launch()[0].split()[-1])
+        tip = len(self.timeline) - 1
+        self.assertEqual(opened.name, Path(self.track.path_at(tip)).name)
+
+    def test_a_file_not_in_the_working_tree_is_reported(self):
+        # The fixture deletes src/util.py before the tip, so it has a track but
+        # no file on disk — an empty buffer would be a worse answer than saying
+        # so.
+        deleted = next(
+            t for t in self.timeline.track_order() if "util" in t.label
+        )
+        tip = len(self.timeline) - 1
+        self.assertIsNone(self.timeline.file_at(deleted.id, tip))
+        message = self.bridge.open_live(deleted.id, tip)
+        self.assertIn("not in the working tree", message)
+        self.assertEqual(self.editor.launches(), [])
+
+    def test_the_message_says_editing_not_opened(self):
+        self.assertIn("editing", self.bridge.open_live(self.track.id, 3))
+        self.assertIn("opened", self.bridge.open_state(self.track.id, 3))
+
+
+class LiveEditableTest(unittest.TestCase):
+    """The editable flag has to survive into each transport."""
+
+    def test_lua_renders_booleans_not_integers(self):
+        rendered = bridge_mod._to_lua({"editable": True, "line": 1})
+        self.assertIn("editable = true", rendered)
+        self.assertIn("line = 1", rendered)
+        self.assertIn("editable = false", bridge_mod._to_lua({"editable": False}))
+
+    def test_the_lua_script_only_locks_buffers_it_was_told_to(self):
+        script = (PROJECT / "cvar" / "nvim_open.lua").read_text()
+        self.assertIn("if not request.editable then", script)
+
+
 class OrderTest(unittest.TestCase):
     """Row ordering. Default puts the live files at the top."""
 

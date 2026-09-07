@@ -186,13 +186,17 @@ def _diff_line_for(diff: str, file_line: int | None) -> int | None:
 def _to_lua(value: object) -> str:
     """Render a small Python value as a Lua literal.
 
-    Only what a handoff request needs — strings, None, and a flat table. Lua
-    has no null, so None becomes `nil`, which reads correctly in a table
-    constructor and lets the script test `if request.right then`.
+    Only what a handoff request needs — strings, booleans, None, and a flat
+    table. Lua has no null, so None becomes `nil`, which reads correctly in a
+    table constructor and lets the script test `if request.right then`.
     """
     if value is None:
         return "nil"
-    if isinstance(value, int) and not isinstance(value, bool):
+    # Before the int branch: bool is a subclass of int, and `true` is not `1`
+    # to Lua's `if`.
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
         return str(value)
     if isinstance(value, str):
         escaped = value.replace("\\", "\\\\").replace('"', '\\"')
@@ -319,19 +323,48 @@ class EditorBridge:
 
         return self._show_one(path, line, short)
 
-    def _show_one(self, path: Path, line: int | None, label: str) -> str:
+    def open_live(self, track_id: str, index: int, line: int | None = None) -> str:
+        """The real file in the working tree, editable — not a staged blob.
+
+        Every other pane opens a temp copy of some revision, which is right for
+        reading and useless for typing into. This one hands over the path in the
+        repo itself.
+
+        `index` is accepted so the panes share a signature, and deliberately not
+        used: the working tree is whatever is checked out now, so the path is
+        resolved at the tip. A track that was renamed mid-branch lives under its
+        newest name, not the one it had at the playhead.
+        """
+        tip = len(self.timeline) - 1
+        path = Path(self.timeline.repo) / self._path_at(track_id, tip)
+        if not path.exists():
+            return f"{path.name} is not in the working tree"
+        return self._show_one(path, line, "working tree", editable=True, verb="editing")
+
+    def _show_one(
+        self,
+        path: Path,
+        line: int | None,
+        label: str,
+        editable: bool = False,
+        verb: str = "opened",
+    ) -> str:
         mode = self.mode
         if mode == "gui":
             target = f"{path}:{line}" if line else str(path)
             self._detach(["--reuse-window", "--goto", target])
         elif mode == "remote":
-            self._to_nvim(path, None, line)
+            self._to_nvim(path, None, line, editable=editable)
         elif mode == "suspend":
             jump = [f"+{line}"] if line and self.name in VIM_FAMILY else []
-            self._blocking(["-R", *jump, str(path)] if self.name in VIM_FAMILY else [str(path)])
+            # -R is what makes the staged panes read-only; the live file needs
+            # a normal buffer or the whole point is lost.
+            readonly = [] if editable else ["-R"]
+            self._blocking([*readonly, *jump, str(path)]
+                           if self.name in VIM_FAMILY else [str(path)])
         else:
             return f"wrote {path}"
-        return f"opened {path.name}"
+        return f"{verb} {path.name}"
 
     # -- plumbing --------------------------------------------------------
 
@@ -389,7 +422,13 @@ class EditorBridge:
             stderr=subprocess.DEVNULL,
         )
 
-    def _to_nvim(self, left: Path, right: Path | None, line: int | None = None) -> None:
+    def _to_nvim(
+        self,
+        left: Path,
+        right: Path | None,
+        line: int | None = None,
+        editable: bool = False,
+    ) -> None:
         """Drive a running nvim over RPC to display this handoff.
 
         The behaviour lives in Lua rather than a `--remote-send` keystroke
@@ -403,6 +442,7 @@ class EditorBridge:
             "left": str(left),
             "right": str(right) if right else None,
             "line": line,
+            "editable": editable,
         }
         script = self._dir / "open.lua"
         script.write_text(template.replace("__CVAR_REQUEST__", _to_lua(request)))

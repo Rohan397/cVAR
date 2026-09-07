@@ -52,7 +52,11 @@ vim.schedule(function()
 
   claim_tab()
   vim.cmd("silent! edit! " .. vim.fn.fnameescape(request.left))
-  readonly()
+  -- The live file is the one buffer meant to be typed into; every other
+  -- handoff is a staged revision that should not look editable.
+  if not request.editable then
+    readonly()
+  end
   set_filetype(request.left)
 
   -- Land on the region the user selected, centred, rather than line 1.
