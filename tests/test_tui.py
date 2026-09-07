@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from make_fixture import build  # noqa: E402
-from scrub.bridge import (  # noqa: E402
+from cvar.bridge import (  # noqa: E402
     VSCODE_FAMILY,
     EditorBridge,
     _relatedness,
@@ -27,10 +27,10 @@ from scrub.bridge import (  # noqa: E402
 )
 import subprocess  # noqa: E402
 
-from scrub import bridge as bridge_mod  # noqa: E402
-from scrub import chunks, doctor, glyphs, watch  # noqa: E402
-from scrub.model import Timeline  # noqa: E402
-from scrub.tui import (  # noqa: E402
+from cvar import bridge as bridge_mod  # noqa: E402
+from cvar import chunks, doctor, glyphs, watch  # noqa: E402
+from cvar.model import Timeline  # noqa: E402
+from cvar.tui import (  # noqa: E402
     ORDERS,
     ST_DELETED,
     ST_RAMP,
@@ -263,7 +263,7 @@ class NvimBridgeTest(unittest.TestCase):
         """Launch arguments as tokens.
 
         Substring checks against the joined command line are unsound: a
-        generated temp path like `scrub-dyomifnp` contains "-d", so asserting
+        generated temp path like `cvar-dyomifnp` contains "-d", so asserting
         a flag's absence fails at random.
         """
         return self.wait_for_launch().split()
@@ -342,7 +342,7 @@ class NvimBridgeTest(unittest.TestCase):
         bridge.open_diff(self.track.id, 5)
         self.wait_for_launch()
         script = (bridge._dir / "open.lua").read_text()
-        self.assertIn("vim.g.scrub_tab", script)
+        self.assertIn("vim.g.cvar_tab", script)
         self.assertIn("nvim_tabpage_is_valid", script)
 
     def test_remote_state_pane_has_no_right_hand_side(self):
@@ -385,27 +385,27 @@ class NvimBridgeTest(unittest.TestCase):
 
     def test_configured_editor_outranks_an_installed_gui(self):
         # Having Cursor on disk must not override someone's $EDITOR.
-        for name in ("SCRUB_EDITOR", "VISUAL", "NVIM"):
+        for name in ("CVAR_EDITOR", "VISUAL", "NVIM"):
             os.environ.pop(name, None)
             self.addCleanup(os.environ.pop, name, None)
         os.environ["EDITOR"] = str(self.editor.path)
         self.addCleanup(os.environ.pop, "EDITOR", None)
         self.assertEqual(Path(detect_editor() or "").name, "nvim")
 
-    def test_scrub_editor_beats_everything_else(self):
+    def test_cvar_editor_beats_everything_else(self):
         os.environ["EDITOR"] = "/bin/cat"
-        os.environ["SCRUB_EDITOR"] = str(self.editor.path)
+        os.environ["CVAR_EDITOR"] = str(self.editor.path)
         self.addCleanup(os.environ.pop, "EDITOR", None)
-        self.addCleanup(os.environ.pop, "SCRUB_EDITOR", None)
+        self.addCleanup(os.environ.pop, "CVAR_EDITOR", None)
         self.assertEqual(Path(detect_editor() or "").name, "nvim")
 
     def _clear_editor_env(self):
-        for name in ("EDITOR", "VISUAL", "SCRUB_EDITOR"):
+        for name in ("EDITOR", "VISUAL", "CVAR_EDITOR"):
             self.addCleanup(_restore_env, name, os.environ.get(name))
             os.environ.pop(name, None)
 
     def _fake_discovery(self, socket):
-        import scrub.bridge as bridge_mod
+        import cvar.bridge as bridge_mod
 
         real = bridge_mod.discover_nvim_server
         self.addCleanup(setattr, bridge_mod, "discover_nvim_server", real)
@@ -690,7 +690,7 @@ class TreeOverviewTest(unittest.TestCase):
         self.assertTrue(app.overview)
         self.assertEqual([r.label for r in app.trees], ["main", "agent-api", "agent-auth"])
 
-    def test_the_cursor_starts_on_the_tree_scrub_was_pointed_at(self):
+    def test_the_cursor_starts_on_the_tree_cvar_was_pointed_at(self):
         linked = self.worktree("agent-auth")
         self.worktree("agent-api")
         app = self.app_on(linked)
@@ -920,7 +920,7 @@ class TreeDrillInTest(TreeOverviewTest):
 
 
 class TreeLaunchTest(TreeOverviewTest):
-    """Which view scrub opens on."""
+    """Which view cvar opens on."""
 
     def launched(self, repo, start_trees=None):
         """The decision launch() makes, without taking over the terminal."""
@@ -999,7 +999,7 @@ class TreeOverviewRenderTest(unittest.TestCase):
     def test_a_row_names_its_branch(self):
         self.assertIn("[agent-api]", self.row("agent-api"))
 
-    def test_the_tree_scrub_was_pointed_at_is_marked_in_text_not_colour(self):
+    def test_the_tree_cvar_was_pointed_at_is_marked_in_text_not_colour(self):
         self.assertIn("main*", self.row("main*"))
 
     def test_every_row_is_drawn_to_the_same_width(self):
@@ -1043,9 +1043,9 @@ def _render(repo: Path, rows: int, cols: int, playhead: int | None = None,
         import locale
 
         locale.setlocale(locale.LC_ALL, "")
-        from scrub.bridge import EditorBridge
-        from scrub.model import Timeline
-        from scrub.tui import ScrubApp, _init_colors
+        from cvar.bridge import EditorBridge
+        from cvar.model import Timeline
+        from cvar.tui import ScrubApp, _init_colors
 
         timeline = Timeline.load(repo)
         app = ScrubApp(timeline, EditorBridge(timeline, None), default_pane)
@@ -1149,7 +1149,7 @@ class TtyProbeTest(unittest.TestCase):
 
         program = (
             f"import sys; sys.path.insert(0, {str(PROJECT)!r})\n"
-            "from scrub.bridge import nvim_sockets, socket_cwd\n"
+            "from cvar.bridge import nvim_sockets, socket_cwd\n"
             "import shutil\n"
             "found = [socket_cwd(s, shutil.which('nvim')) for s in nvim_sockets()]\n"
             "sys.stderr.write('ANSWER:' + repr([f for f in found if f]) + '\\n')\n"
@@ -1199,7 +1199,7 @@ class CursesSmokeTest(unittest.TestCase):
         if pid == 0:  # child
             os.environ["TERM"] = "xterm-256color"
             os.chdir(PROJECT)
-            os.execv(sys.executable, [sys.executable, "-m", "scrub", str(self.repo)])
+            os.execv(sys.executable, [sys.executable, "-m", "cvar", str(self.repo)])
 
         time.sleep(1.2)  # let the timeline load and paint
         os.write(fd, keys)
@@ -1223,7 +1223,7 @@ class CursesSmokeTest(unittest.TestCase):
         os.close(fd)
         self.assertEqual(os.waitstatus_to_exitcode(status), 0)
         text = output.decode(errors="replace")
-        self.assertIn("scrub", text)
+        self.assertIn("cvar", text)
         self.assertIn("authentication.py", text)
         self.assertIn("commit", text)
 
@@ -1261,7 +1261,7 @@ class TreeSmokeTest(unittest.TestCase):
         if pid == 0:  # child
             os.environ["TERM"] = "xterm-256color"
             os.chdir(PROJECT)
-            os.execv(sys.executable, [sys.executable, "-m", "scrub", str(self.repo)])
+            os.execv(sys.executable, [sys.executable, "-m", "cvar", str(self.repo)])
 
         time.sleep(1.5)  # three timelines to load and paint
         os.write(fd, keys)

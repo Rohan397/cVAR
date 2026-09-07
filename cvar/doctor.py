@@ -1,4 +1,4 @@
-"""Explain which editor and transport scrub picked, and why.
+"""Explain which editor and transport cvar picked, and why.
 
 The handoff has several fallbacks and they are all silent — a diff opening in
 the wrong place looks like a bug when it is usually a mismatch between where
@@ -18,7 +18,7 @@ from .model import Timeline
 TRANSPORTS = {
     "gui": "diff opens in the running VS Code / Cursor window",
     "remote": "diff opens in the nvim already running in another pane",
-    "suspend": "scrub yields this terminal to nvim, and takes it back on :qa",
+    "suspend": "cvar yields this terminal to nvim, and takes it back on :qa",
     "none": "no editor available — nothing will open",
 }
 
@@ -27,12 +27,12 @@ def _why_editor(editor: str | None) -> str:
     if editor is None:
         return "nothing resolved"
     name = Path(editor).name
-    for var in ("SCRUB_EDITOR", "VISUAL", "EDITOR"):
+    for var in ("CVAR_EDITOR", "VISUAL", "EDITOR"):
         value = os.environ.get(var, "").split()
         if value and Path(shutil.which(value[0]) or value[0]).name == name:
             return f"from ${var}"
     if os.environ.get("NVIM"):
-        return "from $NVIM — scrub is running inside nvim's :terminal"
+        return "from $NVIM — cvar is running inside nvim's :terminal"
     if name in _bridge.VIM_FAMILY:
         return "a running nvim was found on this repo"
     return "found by scanning installed editors (no $EDITOR set)"

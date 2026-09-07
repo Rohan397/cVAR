@@ -29,7 +29,7 @@ class Tree:
     path: Path
     head: str
     branch: str
-    current: bool  # the tree scrub was pointed at
+    current: bool  # the tree cvar was pointed at
 
     @property
     def label(self) -> str:

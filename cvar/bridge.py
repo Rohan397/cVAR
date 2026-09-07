@@ -10,7 +10,7 @@ Three transports, because editors do not agree on how to be talked to:
     gui      VS Code and friends: a detached CLI call messages a running
              window. The scrubber keeps the terminal.
     remote   nvim with a listening socket: the same idea over RPC. Used
-             automatically when scrub runs inside nvim's :terminal, where
+             automatically when cvar runs inside nvim's :terminal, where
              $NVIM points at the parent.
     suspend  Everything else terminal-shaped: drop out of curses, run the
              editor on the terminal, restore the grid when it exits. The
@@ -42,7 +42,7 @@ def stated_editor() -> str | None:
 
     Configuration only — nothing inferred from what happens to be installed.
     """
-    explicit = os.environ.get("SCRUB_EDITOR", "").split()
+    explicit = os.environ.get("CVAR_EDITOR", "").split()
     if explicit and shutil.which(explicit[0]):
         return shutil.which(explicit[0])
 
@@ -241,7 +241,7 @@ class EditorBridge:
         if self.editor is None and not named:
             self.editor = installed_editor()
         self.suspend = suspend or _no_suspend
-        self._dir = Path(tempfile.mkdtemp(prefix="scrub-"))
+        self._dir = Path(tempfile.mkdtemp(prefix="cvar-"))
 
     @property
     def available(self) -> bool:
@@ -405,7 +405,7 @@ class EditorBridge:
             "line": line,
         }
         script = self._dir / "open.lua"
-        script.write_text(template.replace("__SCRUB_REQUEST__", _to_lua(request)))
+        script.write_text(template.replace("__CVAR_REQUEST__", _to_lua(request)))
 
         # luaeval's second argument arrives as `_A`, so the path never has to be
         # quoted inside the Vim expression.

@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from scrub import trees  # noqa: E402
+from cvar import trees  # noqa: E402
 
 
 class DiscoveryTest(unittest.TestCase):
@@ -55,7 +55,7 @@ class DiscoveryTest(unittest.TestCase):
         self.assertEqual([t.label for t in found], ["main", "agent-api", "agent-auth"])
         self.assertEqual([t.branch for t in found], ["main", "agent-api", "agent-auth"])
 
-    def test_the_tree_scrub_was_pointed_at_is_the_current_one(self):
+    def test_the_tree_cvar_was_pointed_at_is_the_current_one(self):
         linked = self.add_worktree("agent-auth")
         found = trees.discover(linked)
         current = [t.label for t in found if t.current]
@@ -184,7 +184,7 @@ class ChurnColumnTest(unittest.TestCase):
             (self.repo / f"f{n}.py").write_text("x\n" * lines)
             run("add", "-A")
             run("-c", "user.email=t@e", "-c", "user.name=T", "commit", "-q", "-m", f"c{n}")
-        from scrub.model import Timeline
+        from cvar.model import Timeline
         self.timeline = Timeline.load(self.repo)
         self.addCleanup(self.timeline.close)
 

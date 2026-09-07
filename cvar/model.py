@@ -134,7 +134,7 @@ class Timeline:
             raise GitError(
                 f"{where} is not a git work tree.\n"
                 f"       There is no timeline without commits — run `git init` there, "
-                f"or point scrub at a repo: python3 -m scrub /path/to/repo"
+                f"or point cvar at a repo: python3 -m cvar /path/to/repo"
             )
 
         revs = gitio.resolve_range(repo, rev_range, limit)

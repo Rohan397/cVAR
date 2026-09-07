@@ -1,11 +1,11 @@
--- Show one scrub handoff inside a running nvim.
+-- Show one cvar handoff inside a running nvim.
 --
 -- The bridge rewrites this file with the current request substituted in, then
--- executes it over RPC. It keeps a single tab for scrub and reuses it, so a
+-- executes it over RPC. It keeps a single tab for cvar and reuses it, so a
 -- session of scrubbing leaves one diff tab behind rather than thirty, and the
 -- rest of the user's layout is never touched.
 
-local request = __SCRUB_REQUEST__
+local request = __CVAR_REQUEST__
 
 local function readonly()
   vim.cmd("setlocal readonly nomodifiable")
@@ -21,7 +21,7 @@ local function set_filetype(path)
 end
 
 local function claim_tab()
-  local tab = vim.g.scrub_tab
+  local tab = vim.g.cvar_tab
   if tab and vim.api.nvim_tabpage_is_valid(tab) then
     vim.api.nvim_set_current_tabpage(tab)
     -- Collapse last handoff's diff split; `only` is scoped to this tab, so
@@ -32,7 +32,7 @@ local function claim_tab()
   end
   vim.cmd("tabnew")
   tab = vim.api.nvim_get_current_tabpage()
-  vim.g.scrub_tab = tab
+  vim.g.cvar_tab = tab
   return tab
 end
 
@@ -80,7 +80,7 @@ vim.schedule(function()
     }, ",")
   end
 
-  -- When scrub runs inside nvim's own :terminal the RPC steals the cursor from
+  -- When cvar runs inside nvim's own :terminal the RPC steals the cursor from
   -- the scrubber; hand it back and resume terminal mode so arrow keys keep
   -- driving the playhead. In a separate terminal pane the caller is not a
   -- terminal buffer and this is a no-op.
@@ -97,7 +97,7 @@ vim.schedule(function()
 
   end)
   if not ok then
-    vim.notify("scrub: " .. tostring(err), vim.log.levels.WARN)
+    vim.notify("cvar: " .. tostring(err), vim.log.levels.WARN)
   end
 end)
 

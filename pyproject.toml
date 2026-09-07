@@ -15,10 +15,10 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.scripts]
-scrub = "scrub.cli:main"
+cvar = "cvar.cli:main"
 
 [tool.setuptools]
-packages = ["scrub"]
+packages = ["cvar"]
 
 [tool.setuptools.package-data]
-scrub = ["*.lua"]
+cvar = ["*.lua"]

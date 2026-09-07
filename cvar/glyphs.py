@@ -57,7 +57,7 @@ ASCII = Glyphs(
 )
 
 
-_current = ASCII if os.environ.get("SCRUB_ASCII") else UNICODE
+_current = ASCII if os.environ.get("CVAR_ASCII") else UNICODE
 
 
 def active() -> Glyphs:
@@ -87,7 +87,7 @@ def test_card() -> str:
     ]
     lines = [
         "Any of these showing as '?' is missing from your terminal font.",
-        "Run with --ascii (or export SCRUB_ASCII=1) to draw without them.",
+        "Run with --ascii (or export CVAR_ASCII=1) to draw without them.",
         "",
     ]
     for name, chars in ((n, c) for n, c, _ in rows):

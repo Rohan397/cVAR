@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from make_fixture import build  # noqa: E402
-from scrub.model import Timeline, _parse_name_status, _parse_numstat  # noqa: E402
+from cvar.model import Timeline, _parse_name_status, _parse_numstat  # noqa: E402
 
 
 class ParsingTest(unittest.TestCase):

@@ -536,7 +536,7 @@ class ScrubApp:
         curses.doupdate()
 
     def _tree_name(self, row: treesmod.Row) -> str:
-        """The tree's directory, marked if it is the one scrub was pointed at.
+        """The tree's directory, marked if it is the one cvar was pointed at.
 
         A bare asterisk rather than colour alone, for the reason the churn ramp
         carries its magnitude in the glyph as well as the hue.
@@ -551,7 +551,7 @@ class ScrubApp:
         churn = sum(row.weight for row in self.trees)
         commits = sum(len(row.timeline) for row in self.trees)
         return (
-            f"scrub  {len(self.trees)} worktrees · {commits} commits · "
+            f"cvar  {len(self.trees)} worktrees · {commits} commits · "
             f"{churn} lines"
         )
 
@@ -616,12 +616,12 @@ class ScrubApp:
         live = "  ●live" if self.follow else ""
         if self.zoom is not None:
             return (
-                f"scrub  {self.playhead + 1}/{len(timeline)} commits · "
+                f"cvar  {self.playhead + 1}/{len(timeline)} commits · "
                 f"{self.selected.label} · {len(self.chunks)} changed regions{live}"
             )
         solo = f"  solo:{self.solo}" if self.solo else ""
         return (
-            f"scrub  {self.playhead + 1}/{len(timeline)} commits · "
+            f"cvar  {self.playhead + 1}/{len(timeline)} commits · "
             f"{len(timeline.tracks)} tracks · {churn} lines · by {self.order}{solo}{live}"
         )
 
@@ -920,7 +920,7 @@ def _put(win: "curses._CursesWindow", y: int, x: int, text: str, width: int, att
 
 
 def open_initial_view(app: ScrubApp, start_trees: bool | None) -> None:
-    """Decide which of the two views scrub opens on.
+    """Decide which of the two views cvar opens on.
 
     Several worktrees means several sessions, and which one to look at is then
     the first question — so it is the first thing shown. One worktree is the
