@@ -192,8 +192,10 @@ def _to_lua(value: object) -> str:
     """
     if value is None:
         return "nil"
-    # Before the int branch: bool is a subclass of int, and `true` is not `1`
-    # to Lua's `if`.
+    # Before the int branch, because bool is a subclass of int in Python. Lua
+    # counts everything except false and nil as true — 0 included — so a False
+    # rendered as `0` would pass every test it was meant to fail, and the
+    # read-only panes would silently open unlocked.
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, int):
