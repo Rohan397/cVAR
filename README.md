@@ -30,6 +30,31 @@ path-keyed view falls apart, so this is the load-bearing decision.
 
 Following one file is *soloing a track*, not a separate mode.
 
+## Install
+
+```
+/plugin marketplace add Rohan397/cVAR
+/plugin install cvar-workflow@cvar
+/cvar-setup
+```
+
+This repo is both the Python package and a Claude Code plugin marketplace, so
+one source gives you the tool and the discipline that makes it worth using.
+The plugin ships the `incremental-building` skill — small commits, one concern
+per branch — because cVAR can only render a branch worth reading if the branch
+was built that way.
+
+`/cvar-setup` is a separate step because a plugin ships skills and commands,
+not binaries: nothing but you can put `cvar` on your shell's PATH. It installs
+from the marketplace clone, so the tool matches the commit the plugin came
+from.
+
+Without Claude Code, it is a plain Python package with no dependencies:
+
+```sh
+pip install git+https://github.com/Rohan397/cVAR
+```
+
 ## Try it
 
 ```sh
