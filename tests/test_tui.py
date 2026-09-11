@@ -140,6 +140,24 @@ class BridgeTest(unittest.TestCase):
         self.assertIn("base", message)
         self.assertIn(self.timeline.commits[7].short, message)
 
+    def test_unified_cumulative_opens_one_buffer_spanning_base_to_playhead(self):
+        message = self.bridge.open_unified_cumulative(self.track.id, 7)
+        launch = self.wait_for_launch()[0]
+        # One buffer, so --goto rather than --diff, and the span is in the name.
+        self.assertIn("--goto", launch)
+        self.assertNotIn("--diff", launch)
+        self.assertIn(f"@base..{self.timeline.commits[7].short}.diff", launch)
+        self.assertIn("base", message)
+
+    def test_unified_cumulative_spans_the_branch_not_one_commit(self):
+        # The track is rewritten mid-branch. The single-commit diff sees only
+        # the last rewrite; the cumulative one sees the whole span, which is
+        # the distinction the two keys exist to make.
+        span = self.bridge.timeline.cumulative_diff(self.track.id, 7)
+        one = self.bridge.timeline.diff_at(self.track.id, 7)
+        self.assertNotEqual(span, one)
+        self.assertIn("new file", span)
+
     def test_nothing_launches_without_an_explicit_call(self):
         self.assertEqual(self.editor.launches(), [])
 

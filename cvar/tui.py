@@ -27,7 +27,7 @@ from .model import Timeline, Track
 
 RAMP_STEPS = 4  # the ramp is always four buckets, whichever set is in force
 
-PANES = ("unified", "diff", "state", "cumulative")
+PANES = ("unified", "unified-cumulative", "diff", "state", "cumulative")
 ORDERS = ("recent", "first", "churn")
 
 # Style ids. Resolved to curses attributes once colours are initialised, so the
@@ -829,6 +829,7 @@ class ScrubApp:
             return
         opener = {
             "unified": self.bridge.open_unified,
+            "unified-cumulative": self.bridge.open_unified_cumulative,
             "diff": self.bridge.open_diff,
             "state": self.bridge.open_state,
             "cumulative": self.bridge.open_cumulative,
