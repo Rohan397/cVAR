@@ -27,7 +27,18 @@ from .model import Timeline, Track
 
 RAMP_STEPS = 4  # the ramp is always four buckets, whichever set is in force
 
-PANES = ("unified", "diff", "state", "cumulative")
+PANES = ("unified", "unified-cumulative", "diff", "state", "cumulative")
+
+# What the help bar calls each pane. The pane ids are the CLI's vocabulary and
+# say nothing about layout; these say both halves — the span and the layout —
+# because that is exactly the pair the keys let you choose between.
+PANE_LABELS = {
+    "cumulative": "base split",
+    "diff": "commit split",
+    "unified-cumulative": "base unified",
+    "unified": "commit unified",
+    "state": "state",
+}
 ORDERS = ("recent", "first", "churn")
 
 # Style ids. Resolved to curses attributes once colours are initialised, so the
@@ -61,6 +72,10 @@ class ScrubApp:
         # What enter opens. Every pane keeps its own key regardless, so changing
         # this rebinds the default without taking any view away.
         self.default_pane = default_pane if default_pane in PANES else "unified"
+        # A key waiting on its second half. Only `u` arms one today: the span
+        # (base or this commit) is a second question, and answering it with a
+        # second keystroke beats spending two more top-level letters on it.
+        self.pending: str | None = None
         # Zoom: rows become regions of one file instead of one row per file.
         self.zoom: str | None = None
         self.chunks: list[chunkmod.Chunk] = []
@@ -627,13 +642,15 @@ class ScrubApp:
         keys = "  ".join(
             f"{key} {name}"
             for key, name in (
-                ("u", "unified"), ("d", "split"), ("s", "state"),
-                ("c", "cumul"), ("e", "edit"),
+                ("i", "base split"), ("c", "commit split"),
+                ("ui", "base unified"), ("uc", "commit unified"),
+                ("s", "state"), ("e", "edit"),
             )
         )
+        default = PANE_LABELS.get(self.default_pane, self.default_pane)
         return (
             f"{G.left}{G.right} commit  {G.up}{G.down} track  [ ] next change  "
-            f"{G.enter} {self.default_pane}  {keys}  o order  r reload  "
+            f"{G.enter} {default}  {keys}  o order  r reload  "
             f"{'z files' if self.zoom else 'z chunks'}  f solo  w trees  q quit"
         )
 
@@ -707,6 +724,9 @@ class ScrubApp:
             if self.overview:
                 self._overview_key(key)
                 continue
+            if self.pending is not None:
+                self._pending_key(key)
+                continue
             if key in (curses.KEY_LEFT, "h"):
                 self.move_playhead(-1)
             elif key in (curses.KEY_RIGHT, "l"):
@@ -743,15 +763,33 @@ class ScrubApp:
             elif key in ("\n", "\r", curses.KEY_ENTER):
                 self._handoff(self.default_pane)
             elif key == "u":
-                self._handoff("unified")
-            elif key == "d":
+                # Arms the span question rather than answering it; `ui` and
+                # `uc` are the two halves.
+                self.pending = "u"
+                self.status = "u — i for base, c for this commit"
+            elif key == "i":
+                self._handoff("cumulative")
+            elif key == "c":
                 self._handoff("diff")
             elif key == "s":
                 self._handoff("state")
-            elif key == "c":
-                self._handoff("cumulative")
             elif key == "e":
                 self.edit_live()
+
+    def _pending_key(self, key) -> None:
+        """The second half of a two-key sequence. Always consumes the key.
+
+        Falling through to the normal bindings instead would make a mistyped
+        `u` silently do something else — `ud` would open a pane nobody asked
+        for. Swallowing it and saying so is the recoverable failure.
+        """
+        prefix, self.pending = self.pending, None
+        if prefix == "u" and key == "i":
+            self._handoff("unified-cumulative")
+        elif prefix == "u" and key == "c":
+            self._handoff("unified")
+        else:
+            self.status = f"{prefix} needs i (base) or c (this commit)"
 
     def _overview_key(self, key) -> None:
         """Keys while the rows are worktrees.
@@ -829,6 +867,7 @@ class ScrubApp:
             return
         opener = {
             "unified": self.bridge.open_unified,
+            "unified-cumulative": self.bridge.open_unified_cumulative,
             "diff": self.bridge.open_diff,
             "state": self.bridge.open_state,
             "cumulative": self.bridge.open_cumulative,

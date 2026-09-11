@@ -49,7 +49,7 @@ def main(argv: list[str] | None = None) -> int:
         default=os.environ.get("CVAR_PANE", "unified"),
         help=(
             "what enter opens (default: unified, or $CVAR_PANE). "
-            "d/s/c still open each pane explicitly."
+            "i/c/ui/uc/s still open each pane explicitly."
         ),
     )
     parser.add_argument(

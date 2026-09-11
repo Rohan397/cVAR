@@ -315,6 +315,29 @@ class EditorBridge:
         path.write_text(text)
         return self._show_one(path, _diff_line_for(text, line), short)
 
+    def open_unified_cumulative(
+        self, track_id: str, index: int, line: int | None = None
+    ) -> str:
+        """One buffer: everything the branch did to the track, base to playhead.
+
+        The unified counterpart to `open_cumulative`, which shows the same two
+        revisions side by side. A cumulative diff is rarely empty — that only
+        happens when the branch wrote the file and reverted it — so this falls
+        back to the file itself the way `open_unified` does.
+        """
+        text = self.timeline.cumulative_diff(track_id, index)
+        if not text.strip():
+            if self.timeline.file_at(track_id, index) is None:
+                return "file does not exist at this commit"
+            return f"unchanged since base — {self.open_state(track_id, index, line)}"
+        short = self.timeline.commits[index].short
+        source = Path(self._path_at(track_id, index))
+        # base..short in the stem, so the tab says which span it covers and
+        # cannot be mistaken for the single-commit diff opened from the same file.
+        path = self._dir / f"{source.stem}@base..{short}.diff"
+        path.write_text(text)
+        return self._show_one(path, _diff_line_for(text, line), f"base..{short}")
+
     def open_state(self, track_id: str, index: int, line: int | None = None) -> str:
         """The file as it exists at the playhead — a single buffer, no diff."""
         blob = self.timeline.file_at(track_id, index)

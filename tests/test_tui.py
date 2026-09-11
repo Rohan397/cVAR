@@ -140,6 +140,24 @@ class BridgeTest(unittest.TestCase):
         self.assertIn("base", message)
         self.assertIn(self.timeline.commits[7].short, message)
 
+    def test_unified_cumulative_opens_one_buffer_spanning_base_to_playhead(self):
+        message = self.bridge.open_unified_cumulative(self.track.id, 7)
+        launch = self.wait_for_launch()[0]
+        # One buffer, so --goto rather than --diff, and the span is in the name.
+        self.assertIn("--goto", launch)
+        self.assertNotIn("--diff", launch)
+        self.assertIn(f"@base..{self.timeline.commits[7].short}.diff", launch)
+        self.assertIn("base", message)
+
+    def test_unified_cumulative_spans_the_branch_not_one_commit(self):
+        # The track is rewritten mid-branch. The single-commit diff sees only
+        # the last rewrite; the cumulative one sees the whole span, which is
+        # the distinction the two keys exist to make.
+        span = self.bridge.timeline.cumulative_diff(self.track.id, 7)
+        one = self.bridge.timeline.diff_at(self.track.id, 7)
+        self.assertNotEqual(span, one)
+        self.assertIn("new file", span)
+
     def test_nothing_launches_without_an_explicit_call(self):
         self.assertEqual(self.editor.launches(), [])
 
@@ -1318,34 +1336,64 @@ class DefaultPaneTest(unittest.TestCase):
         self.addCleanup(timeline.close)
         return ScrubApp(timeline, EditorBridge(timeline, "/nonexistent"), pane)
 
-    def test_unified_is_the_default(self):
-        # One buffer with + and - coloured answers "what did this commit do",
-        # which is the question asked most often.
+    def test_the_single_commit_unified_pane_is_the_default(self):
+        # Scrubbing moves one commit at a time, so the pane on the key you are
+        # already pressing is the per-commit one. The base spans are the
+        # deliberate step back, and keep their own keys.
         self.assertEqual(self.app("diff").default_pane, "diff")
         self.assertEqual(ScrubApp(
             Timeline.load(self.repo), EditorBridge(Timeline.load(self.repo), "/nonexistent")
         ).default_pane, "unified")
 
-    def test_unified_has_its_own_key_too(self):
-        self.assertIn("u unified", self.app("diff")._help())
-        self.assertIn("d split", self.app("diff")._help())
+    def test_the_help_bar_spells_out_both_halves_of_the_prefix(self):
+        help_text = self.app("diff")._help()
+        self.assertIn("ui base unified", help_text)
+        self.assertIn("uc commit unified", help_text)
+
+    def test_u_arms_the_span_question_instead_of_opening_a_pane(self):
+        app = self.app("cumulative")
+        app.pending = "u"
+        app._pending_key("i")
+        self.assertIsNone(app.pending)
+
+    def test_the_two_halves_of_u_pick_the_two_unified_spans(self):
+        opened = []
+        app = self.app("cumulative")
+        app._handoff = opened.append
+        for key, pane in (("i", "unified-cumulative"), ("c", "unified")):
+            app.pending = "u"
+            app._pending_key(key)
+            self.assertEqual(opened[-1], pane)
+
+    def test_an_unfinished_prefix_swallows_the_key_and_says_so(self):
+        # `ud` must not fall through and open the pane `d` used to open.
+        opened = []
+        app = self.app("cumulative")
+        app._handoff = opened.append
+        app.pending = "u"
+        app._pending_key("d")
+        self.assertEqual(opened, [])
+        self.assertIsNone(app.pending)
+        self.assertIn("i (base)", app.status)
 
     def test_enter_opens_the_configured_pane(self):
         self.assertEqual(self.app("state").default_pane, "state")
-        self.assertEqual(self.app("cumulative").default_pane, "cumulative")
+        self.assertEqual(self.app("unified").default_pane, "unified")
 
-    def test_an_unknown_pane_falls_back_to_unified(self):
+    def test_an_unknown_pane_falls_back_to_the_default(self):
         self.assertEqual(self.app("nonsense").default_pane, "unified")
 
     def test_help_bar_names_the_current_default(self):
         # Rebinding ⏎ without saying so would leave the user guessing.
         self.assertIn("enter state", self.app("state")._help())
-        self.assertIn("enter diff", self.app("diff")._help())
+        self.assertIn("enter commit split", self.app("diff")._help())
+        self.assertIn("enter base split", self.app("cumulative")._help())
 
     def test_every_pane_keeps_its_own_key_regardless(self):
         help_text = self.app("state")._help()
         for key, name in (
-            ("u", "unified"), ("d", "split"), ("s", "state"), ("c", "cumul")
+            ("i", "base split"), ("c", "commit split"),
+            ("ui", "base unified"), ("uc", "commit unified"), ("s", "state"),
         ):
             self.assertIn(f"{key} {name}", help_text)
 

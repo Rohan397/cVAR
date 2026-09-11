@@ -47,9 +47,11 @@ cvar . --no-trees                 # skip the worktree overview
 | `g` `G` | jump to the start/end of the branch |
 | `f` | solo the selected track (following one file is soloing, not a mode) |
 | `w` | step up to the worktrees, or back down |
-| `⏎` | open this commit's diff, or the file itself if it was untouched |
+| `⏎` | open the default pane — `uc` unless you rebound it |
+| `i` | split: base on the left, the playhead on the right |
+| `c` | split: the previous commit on the left, the playhead on the right |
+| `ui` `uc` | the same two spans as one unified buffer instead of a split |
 | `s` | open the file as it exists at the playhead |
-| `c` | open the cumulative diff, base → playhead |
 | `e` | jump to the tip and open the real file, editable |
 | `q` | quit |
 
@@ -144,7 +146,7 @@ go-to-definition and your own keybindings. What the editor is bad at is showing
 the shape of a branch over time, which is exactly what the grid is for.
 
 So nothing opens until you press a key. Scanning the grid never touches the
-editor; `⏎`, `s` and `c` hand the current frame over. The bridge stages the
+editor; `⏎`, `s` and the span keys hand the current frame over. The bridge stages the
 blobs at the playhead into a temp dir as `name@<short-sha>.py` — suffix
 preserved so highlighting works, sha in the stem so the tab says where the
 playhead is — then uses whichever transport the editor understands.
@@ -217,19 +219,39 @@ resolve is reported rather than silently substituted.
 
 ## Panes
 
-Three views of the same track, all anchored to the playhead:
+Every pane is two independent choices, so the keys are a grid rather than a
+list. **Span** — how far back the left-hand side reaches — and **layout** —
+one buffer or two.
 
-- `diff` (`⏎`) — what this one commit did to the file. Most commits leave
-  any given file alone, so when there is no change here it opens the file
-  at the playhead instead of refusing.
-- `state` (`s`) — the file as it exists at the playhead. The video-editor
-  default: you see the frame, not the delta.
-- `cumulative` (`c`) — everything the branch did to this file from base to
-  playhead. Usually the most useful for review, since it skips the churn where
-  an agent wrote something and rewrote it three commits later.
+| | split (two buffers) | unified (one buffer) |
+| --- | --- | --- |
+| **base → playhead** | `i` | `ui` |
+| **previous commit → playhead** | `c` | `uc` |
 
-All three stage a copy of the revision under a temp path and open it read-only:
-they are for reading, and a buffer you can type into but never save is a trap.
+`u` alone arms the span question rather than answering it; `i` or `c` finishes
+it. A mistyped second key is swallowed and reported, never quietly routed to
+some other pane.
+
+Base is where the branch forked — the parent of the oldest commit in the
+range. The base spans answer "what has this branch done to the file" and skip
+the churn where an agent wrote something and rewrote it three commits later;
+the commit spans answer "what was this one commit thinking", churn included.
+
+**`uc` is what `⏎` opens** unless you rebind it with `--open` or `$CVAR_PANE`.
+Scrubbing is a per-commit motion, so the per-commit view is the one that
+matches the key you are already pressing; the base spans are a deliberate step
+back rather than the thing you land on.
+
+The odd one out is `state` (`s`) — the file as it exists at the playhead, no
+diff at all. The video-editor default: you see the frame, not the delta.
+
+A base-to-playhead span is rarely empty, but a single commit usually leaves any
+given file alone; when it does, `c` and `uc` open the file at the playhead
+instead of refusing.
+
+Every pane stages a copy of the revision under a temp path and opens it
+read-only: they are for reading, and a buffer you can type into but never save
+is a trap.
 
 `e` is the exception, and the way out of the review room. It moves the playhead
 to the tip, then opens the **actual file in the working tree**, unlocked — so
