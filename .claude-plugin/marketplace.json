@@ -1,0 +1,14 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "cvar",
+  "description": "Scrub a git branch the way you scrub a video timeline, and build branches worth scrubbing.",
+  "owner": { "name": "Rohan Hejmadi" },
+  "plugins": [
+    {
+      "name": "cvar-workflow",
+      "description": "Build in small reviewable branches, and review them on a cVAR timeline. Ships the incremental-building skill and a setup command that installs the cvar CLI.",
+      "source": "./plugins/cvar-workflow",
+      "category": "workflow"
+    }
+  ]
+}
