@@ -1345,9 +1345,36 @@ class DefaultPaneTest(unittest.TestCase):
             Timeline.load(self.repo), EditorBridge(Timeline.load(self.repo), "/nonexistent")
         ).default_pane, "cumulative")
 
-    def test_unified_has_its_own_key_too(self):
-        self.assertIn("u unified", self.app("diff")._help())
-        self.assertIn("d split", self.app("diff")._help())
+    def test_the_help_bar_spells_out_both_halves_of_the_prefix(self):
+        help_text = self.app("diff")._help()
+        self.assertIn("ui base unified", help_text)
+        self.assertIn("uc commit unified", help_text)
+
+    def test_u_arms_the_span_question_instead_of_opening_a_pane(self):
+        app = self.app("cumulative")
+        app.pending = "u"
+        app._pending_key("i")
+        self.assertIsNone(app.pending)
+
+    def test_the_two_halves_of_u_pick_the_two_unified_spans(self):
+        opened = []
+        app = self.app("cumulative")
+        app._handoff = opened.append
+        for key, pane in (("i", "unified-cumulative"), ("c", "unified")):
+            app.pending = "u"
+            app._pending_key(key)
+            self.assertEqual(opened[-1], pane)
+
+    def test_an_unfinished_prefix_swallows_the_key_and_says_so(self):
+        # `ud` must not fall through and open the pane `d` used to open.
+        opened = []
+        app = self.app("cumulative")
+        app._handoff = opened.append
+        app.pending = "u"
+        app._pending_key("d")
+        self.assertEqual(opened, [])
+        self.assertIsNone(app.pending)
+        self.assertIn("i (base)", app.status)
 
     def test_enter_opens_the_configured_pane(self):
         self.assertEqual(self.app("state").default_pane, "state")
@@ -1359,12 +1386,14 @@ class DefaultPaneTest(unittest.TestCase):
     def test_help_bar_names_the_current_default(self):
         # Rebinding ⏎ without saying so would leave the user guessing.
         self.assertIn("enter state", self.app("state")._help())
-        self.assertIn("enter diff", self.app("diff")._help())
+        self.assertIn("enter commit split", self.app("diff")._help())
+        self.assertIn("enter base split", self.app("cumulative")._help())
 
     def test_every_pane_keeps_its_own_key_regardless(self):
         help_text = self.app("state")._help()
         for key, name in (
-            ("u", "unified"), ("d", "split"), ("s", "state"), ("c", "cumul")
+            ("i", "base split"), ("c", "commit split"),
+            ("ui", "base unified"), ("uc", "commit unified"), ("s", "state"),
         ):
             self.assertIn(f"{key} {name}", help_text)
 

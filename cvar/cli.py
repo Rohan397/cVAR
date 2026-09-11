@@ -49,7 +49,7 @@ def main(argv: list[str] | None = None) -> int:
         default=os.environ.get("CVAR_PANE", "cumulative"),
         help=(
             "what enter opens (default: cumulative, or $CVAR_PANE). "
-            "u/d/s still open each pane explicitly."
+            "i/c/ui/uc/s still open each pane explicitly."
         ),
     )
     parser.add_argument(
