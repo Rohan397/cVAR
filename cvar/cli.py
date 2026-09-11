@@ -46,9 +46,9 @@ def main(argv: list[str] | None = None) -> int:
         "--open",
         dest="default_pane",
         choices=PANES,
-        default=os.environ.get("CVAR_PANE", "cumulative"),
+        default=os.environ.get("CVAR_PANE", "unified"),
         help=(
-            "what enter opens (default: cumulative, or $CVAR_PANE). "
+            "what enter opens (default: unified, or $CVAR_PANE). "
             "i/c/ui/uc/s still open each pane explicitly."
         ),
     )

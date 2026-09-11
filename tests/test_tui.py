@@ -1336,14 +1336,14 @@ class DefaultPaneTest(unittest.TestCase):
         self.addCleanup(timeline.close)
         return ScrubApp(timeline, EditorBridge(timeline, "/nonexistent"), pane)
 
-    def test_cumulative_is_the_default(self):
-        # Base to playhead answers "what has this branch done to the file",
-        # which survives an agent writing something and rewriting it later.
-        # The per-commit views keep their own keys, so nothing is lost.
+    def test_the_single_commit_unified_pane_is_the_default(self):
+        # Scrubbing moves one commit at a time, so the pane on the key you are
+        # already pressing is the per-commit one. The base spans are the
+        # deliberate step back, and keep their own keys.
         self.assertEqual(self.app("diff").default_pane, "diff")
         self.assertEqual(ScrubApp(
             Timeline.load(self.repo), EditorBridge(Timeline.load(self.repo), "/nonexistent")
-        ).default_pane, "cumulative")
+        ).default_pane, "unified")
 
     def test_the_help_bar_spells_out_both_halves_of_the_prefix(self):
         help_text = self.app("diff")._help()
@@ -1381,7 +1381,7 @@ class DefaultPaneTest(unittest.TestCase):
         self.assertEqual(self.app("unified").default_pane, "unified")
 
     def test_an_unknown_pane_falls_back_to_the_default(self):
-        self.assertEqual(self.app("nonsense").default_pane, "cumulative")
+        self.assertEqual(self.app("nonsense").default_pane, "unified")
 
     def test_help_bar_names_the_current_default(self):
         # Rebinding ⏎ without saying so would leave the user guessing.

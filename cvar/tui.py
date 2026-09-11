@@ -65,13 +65,13 @@ class ScrubApp:
         self,
         timeline: Timeline,
         bridge: EditorBridge,
-        default_pane: str = "cumulative",
+        default_pane: str = "unified",
     ) -> None:
         self.timeline = timeline
         self.bridge = bridge
         # What enter opens. Every pane keeps its own key regardless, so changing
         # this rebinds the default without taking any view away.
-        self.default_pane = default_pane if default_pane in PANES else "cumulative"
+        self.default_pane = default_pane if default_pane in PANES else "unified"
         # A key waiting on its second half. Only `u` arms one today: the span
         # (base or this commit) is a second question, and answering it with a
         # second keystroke beats spending two more top-level letters on it.
@@ -1007,7 +1007,7 @@ def launch(
     timeline: Timeline,
     editor: str | None = None,
     server: str | None = None,
-    default_pane: str = "cumulative",
+    default_pane: str = "unified",
     start_trees: bool | None = None,
 ) -> None:
     # curses encodes output through the C locale, so the ramp glyphs and box

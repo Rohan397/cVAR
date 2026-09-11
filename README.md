@@ -47,7 +47,7 @@ cvar . --no-trees                 # skip the worktree overview
 | `g` `G` | jump to the start/end of the branch |
 | `f` | solo the selected track (following one file is soloing, not a mode) |
 | `w` | step up to the worktrees, or back down |
-| `⏎` | open the default pane — `i` unless you rebound it |
+| `⏎` | open the default pane — `uc` unless you rebound it |
 | `i` | split: base on the left, the playhead on the right |
 | `c` | split: the previous commit on the left, the playhead on the right |
 | `ui` `uc` | the same two spans as one unified buffer instead of a split |
@@ -232,11 +232,15 @@ one buffer or two.
 it. A mistyped second key is swallowed and reported, never quietly routed to
 some other pane.
 
-Base is where the branch forked — the parent of the oldest commit in the range.
-**`i` is the default**, on `⏎` too, because it is the most useful for review:
-it skips the churn where an agent wrote something and rewrote it three commits
-later. `c` is for when you want that churn, which is when you are asking what
-one specific commit was thinking.
+Base is where the branch forked — the parent of the oldest commit in the
+range. The base spans answer "what has this branch done to the file" and skip
+the churn where an agent wrote something and rewrote it three commits later;
+the commit spans answer "what was this one commit thinking", churn included.
+
+**`uc` is what `⏎` opens** unless you rebind it with `--open` or `$CVAR_PANE`.
+Scrubbing is a per-commit motion, so the per-commit view is the one that
+matches the key you are already pressing; the base spans are a deliberate step
+back rather than the thing you land on.
 
 The odd one out is `state` (`s`) — the file as it exists at the playhead, no
 diff at all. The video-editor default: you see the frame, not the delta.
