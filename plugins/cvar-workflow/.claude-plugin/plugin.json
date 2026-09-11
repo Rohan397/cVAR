@@ -1,0 +1,11 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "cvar-workflow",
+  "version": "0.1.0",
+  "description": "Build in small reviewable branches, and review them on a cVAR timeline. Ships the incremental-building skill and a setup command that installs the cvar CLI.",
+  "author": { "name": "Rohan Hejmadi" },
+  "homepage": "https://github.com/Rohan397/cVAR",
+  "repository": "https://github.com/Rohan397/cVAR",
+  "license": "MIT",
+  "keywords": ["git", "code-review", "workflow", "commits", "branches"]
+}
