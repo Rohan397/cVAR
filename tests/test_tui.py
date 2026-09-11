@@ -1318,13 +1318,14 @@ class DefaultPaneTest(unittest.TestCase):
         self.addCleanup(timeline.close)
         return ScrubApp(timeline, EditorBridge(timeline, "/nonexistent"), pane)
 
-    def test_unified_is_the_default(self):
-        # One buffer with + and - coloured answers "what did this commit do",
-        # which is the question asked most often.
+    def test_cumulative_is_the_default(self):
+        # Base to playhead answers "what has this branch done to the file",
+        # which survives an agent writing something and rewriting it later.
+        # The per-commit views keep their own keys, so nothing is lost.
         self.assertEqual(self.app("diff").default_pane, "diff")
         self.assertEqual(ScrubApp(
             Timeline.load(self.repo), EditorBridge(Timeline.load(self.repo), "/nonexistent")
-        ).default_pane, "unified")
+        ).default_pane, "cumulative")
 
     def test_unified_has_its_own_key_too(self):
         self.assertIn("u unified", self.app("diff")._help())
@@ -1332,10 +1333,10 @@ class DefaultPaneTest(unittest.TestCase):
 
     def test_enter_opens_the_configured_pane(self):
         self.assertEqual(self.app("state").default_pane, "state")
-        self.assertEqual(self.app("cumulative").default_pane, "cumulative")
+        self.assertEqual(self.app("unified").default_pane, "unified")
 
-    def test_an_unknown_pane_falls_back_to_unified(self):
-        self.assertEqual(self.app("nonsense").default_pane, "unified")
+    def test_an_unknown_pane_falls_back_to_the_default(self):
+        self.assertEqual(self.app("nonsense").default_pane, "cumulative")
 
     def test_help_bar_names_the_current_default(self):
         # Rebinding ⏎ without saying so would leave the user guessing.

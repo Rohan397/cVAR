@@ -47,9 +47,9 @@ cvar . --no-trees                 # skip the worktree overview
 | `g` `G` | jump to the start/end of the branch |
 | `f` | solo the selected track (following one file is soloing, not a mode) |
 | `w` | step up to the worktrees, or back down |
-| `⏎` | open this commit's diff, or the file itself if it was untouched |
+| `⏎` | open the cumulative diff, base → playhead |
 | `s` | open the file as it exists at the playhead |
-| `c` | open the cumulative diff, base → playhead |
+| `u` | open this commit's diff, or the file itself if it was untouched |
 | `e` | jump to the tip and open the real file, editable |
 | `q` | quit |
 
@@ -219,14 +219,14 @@ resolve is reported rather than silently substituted.
 
 Three views of the same track, all anchored to the playhead:
 
-- `diff` (`⏎`) — what this one commit did to the file. Most commits leave
+- `cumulative` (`⏎`, `c`) — everything the branch did to this file from base
+  to playhead. The default, because it is the most useful for review: it skips
+  the churn where an agent wrote something and rewrote it three commits later.
+- `diff` (`u`) — what this one commit did to the file. Most commits leave
   any given file alone, so when there is no change here it opens the file
   at the playhead instead of refusing.
 - `state` (`s`) — the file as it exists at the playhead. The video-editor
   default: you see the frame, not the delta.
-- `cumulative` (`c`) — everything the branch did to this file from base to
-  playhead. Usually the most useful for review, since it skips the churn where
-  an agent wrote something and rewrote it three commits later.
 
 All three stage a copy of the revision under a temp path and open it read-only:
 they are for reading, and a buffer you can type into but never save is a trap.

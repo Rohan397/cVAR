@@ -54,13 +54,13 @@ class ScrubApp:
         self,
         timeline: Timeline,
         bridge: EditorBridge,
-        default_pane: str = "unified",
+        default_pane: str = "cumulative",
     ) -> None:
         self.timeline = timeline
         self.bridge = bridge
         # What enter opens. Every pane keeps its own key regardless, so changing
         # this rebinds the default without taking any view away.
-        self.default_pane = default_pane if default_pane in PANES else "unified"
+        self.default_pane = default_pane if default_pane in PANES else "cumulative"
         # Zoom: rows become regions of one file instead of one row per file.
         self.zoom: str | None = None
         self.chunks: list[chunkmod.Chunk] = []
@@ -968,7 +968,7 @@ def launch(
     timeline: Timeline,
     editor: str | None = None,
     server: str | None = None,
-    default_pane: str = "unified",
+    default_pane: str = "cumulative",
     start_trees: bool | None = None,
 ) -> None:
     # curses encodes output through the C locale, so the ramp glyphs and box
