@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from make_fixture import build  # noqa: E402
-from scrub.bridge import (  # noqa: E402
+from cvar.bridge import (  # noqa: E402
     VSCODE_FAMILY,
     EditorBridge,
     _relatedness,
@@ -27,10 +27,16 @@ from scrub.bridge import (  # noqa: E402
 )
 import subprocess  # noqa: E402
 
-from scrub import bridge as bridge_mod  # noqa: E402
-from scrub import chunks, doctor, glyphs, watch  # noqa: E402
-from scrub.model import Timeline  # noqa: E402
-from scrub.tui import ORDERS, ST_DELETED, ST_RAMP, ScrubApp  # noqa: E402
+from cvar import bridge as bridge_mod  # noqa: E402
+from cvar import chunks, doctor, glyphs, watch  # noqa: E402
+from cvar.model import Timeline  # noqa: E402
+from cvar.tui import (  # noqa: E402
+    ORDERS,
+    ST_DELETED,
+    ST_RAMP,
+    ScrubApp,
+    open_initial_view,
+)
 
 PROJECT = Path(__file__).resolve().parent.parent
 
@@ -257,7 +263,7 @@ class NvimBridgeTest(unittest.TestCase):
         """Launch arguments as tokens.
 
         Substring checks against the joined command line are unsound: a
-        generated temp path like `scrub-dyomifnp` contains "-d", so asserting
+        generated temp path like `cvar-dyomifnp` contains "-d", so asserting
         a flag's absence fails at random.
         """
         return self.wait_for_launch().split()
@@ -336,7 +342,7 @@ class NvimBridgeTest(unittest.TestCase):
         bridge.open_diff(self.track.id, 5)
         self.wait_for_launch()
         script = (bridge._dir / "open.lua").read_text()
-        self.assertIn("vim.g.scrub_tab", script)
+        self.assertIn("vim.g.cvar_tab", script)
         self.assertIn("nvim_tabpage_is_valid", script)
 
     def test_remote_state_pane_has_no_right_hand_side(self):
@@ -379,27 +385,27 @@ class NvimBridgeTest(unittest.TestCase):
 
     def test_configured_editor_outranks_an_installed_gui(self):
         # Having Cursor on disk must not override someone's $EDITOR.
-        for name in ("SCRUB_EDITOR", "VISUAL", "NVIM"):
+        for name in ("CVAR_EDITOR", "VISUAL", "NVIM"):
             os.environ.pop(name, None)
             self.addCleanup(os.environ.pop, name, None)
         os.environ["EDITOR"] = str(self.editor.path)
         self.addCleanup(os.environ.pop, "EDITOR", None)
         self.assertEqual(Path(detect_editor() or "").name, "nvim")
 
-    def test_scrub_editor_beats_everything_else(self):
+    def test_cvar_editor_beats_everything_else(self):
         os.environ["EDITOR"] = "/bin/cat"
-        os.environ["SCRUB_EDITOR"] = str(self.editor.path)
+        os.environ["CVAR_EDITOR"] = str(self.editor.path)
         self.addCleanup(os.environ.pop, "EDITOR", None)
-        self.addCleanup(os.environ.pop, "SCRUB_EDITOR", None)
+        self.addCleanup(os.environ.pop, "CVAR_EDITOR", None)
         self.assertEqual(Path(detect_editor() or "").name, "nvim")
 
     def _clear_editor_env(self):
-        for name in ("EDITOR", "VISUAL", "SCRUB_EDITOR"):
+        for name in ("EDITOR", "VISUAL", "CVAR_EDITOR"):
             self.addCleanup(_restore_env, name, os.environ.get(name))
             os.environ.pop(name, None)
 
     def _fake_discovery(self, socket):
-        import scrub.bridge as bridge_mod
+        import cvar.bridge as bridge_mod
 
         real = bridge_mod.discover_nvim_server
         self.addCleanup(setattr, bridge_mod, "discover_nvim_server", real)
@@ -631,8 +637,394 @@ class RenderTest(unittest.TestCase):
         self.assertTrue(clip_line.startswith(" "), repr(clip_line[:8]))
 
 
+class TreeOverviewTest(unittest.TestCase):
+    """The level above the grid: one row per worktree."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        # Resolved: git reports worktree paths resolved, and on macOS the
+        # temp dir is reached through a /var -> /private/var symlink.
+        self.root = Path(self.tmp.name).resolve()
+        self.repo = self.root / "main"
+        self.repo.mkdir()
+        self.git("init", "-q", "-b", "main")
+        self.commit("base")
+
+    def git(self, *args, repo=None):
+        subprocess.run(["git", "-C", str(repo or self.repo), *args],
+                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def commit(self, message, repo=None, lines=1):
+        target = repo or self.repo
+        (target / f"{message}.py").write_text("x\n" * lines)
+        self.git("add", "-A", repo=target)
+        self.git("-c", "user.email=t@e", "-c", "user.name=T",
+                 "commit", "-q", "-m", message, repo=target)
+
+    def worktree(self, name, commits=2, lines=1):
+        path = self.root / name
+        self.git("worktree", "add", "-q", "-b", name, str(path))
+        for n in range(commits):
+            self.commit(f"{name}-{n}", repo=path, lines=lines)
+        return path
+
+    def app_on(self, repo):
+        timeline = Timeline.load(repo)
+        app = ScrubApp(timeline, EditorBridge(timeline, "/nonexistent"))
+        self.addCleanup(lambda: app.timeline.close())
+        self.addCleanup(app.leave_overview)
+        return app
+
+    def test_a_lone_worktree_reports_rather_than_opening_an_overview(self):
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        self.assertFalse(app.overview)
+        self.assertIn("one worktree", app.status)
+
+    def test_several_worktrees_each_become_a_row(self):
+        self.worktree("agent-auth")
+        self.worktree("agent-api")
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        self.assertTrue(app.overview)
+        self.assertEqual([r.label for r in app.trees], ["main", "agent-api", "agent-auth"])
+
+    def test_the_cursor_starts_on_the_tree_cvar_was_pointed_at(self):
+        linked = self.worktree("agent-auth")
+        self.worktree("agent-api")
+        app = self.app_on(linked)
+        app.enter_overview()
+        self.assertEqual(app.selected_tree.label, "agent-auth")
+
+    def test_each_row_carries_its_own_branch(self):
+        self.worktree("agent-auth", commits=3)
+        self.worktree("agent-api", commits=1)
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        by_label = {r.label: r for r in app.trees}
+        self.assertEqual(len(by_label["agent-auth"].timeline), 3)
+        self.assertEqual(len(by_label["agent-api"].timeline), 1)
+
+    def test_leaving_releases_every_row_timeline(self):
+        self.worktree("agent-auth")
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        held = [r.timeline for r in app.trees]
+        for timeline in held:
+            timeline.file_at(next(iter(timeline.tracks)), 0)  # force a batch open
+        app.leave_overview()
+        self.assertFalse(app.overview)
+        self.assertTrue(all(t._batch is None for t in held))
+
+    def test_leaving_never_closes_the_apps_own_timeline(self):
+        self.worktree("agent-auth")
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        app.leave_overview()
+        # Would raise if the overview had closed it out from under the app.
+        self.assertTrue(len(app.timeline) >= 1)
+
+    def test_the_column_parks_on_the_newest_end(self):
+        self.worktree("agent-auth")
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        self.assertTrue(app.column_at_tip)
+
+    def test_stepping_back_a_column_unpins_it_from_the_tip(self):
+        self.worktree("agent-auth")
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        app._last_grid_w = 40
+        app.move_column(-1)
+        self.assertFalse(app.column_at_tip)
+        self.assertEqual(app.column, 38)
+
+    def test_the_column_clamps_at_both_ends(self):
+        self.worktree("agent-auth")
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        app._last_grid_w = 40
+        app.move_column(-500)
+        self.assertEqual(app.column, 0)
+        app.move_column(500)
+        self.assertEqual(app.column, 39)
+        self.assertTrue(app.column_at_tip)
+
+    def test_reload_keeps_the_selected_tree(self):
+        self.worktree("agent-auth")
+        self.worktree("agent-api")
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        app.cursor = 2
+        chosen = app.selected_tree.id
+        app.refresh_overview()
+        self.assertEqual(app.selected_tree.id, chosen)
+
+    def test_a_quiet_repo_reports_no_tree_as_changed(self):
+        self.worktree("agent-auth")
+        self.worktree("agent-api")
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        self.assertEqual(app.trees_changed(), [])
+
+    def test_a_commit_in_another_session_is_noticed(self):
+        linked = self.worktree("agent-auth")
+        self.worktree("agent-api")
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        self.commit("from-another-session", repo=linked)
+        self.assertEqual(app.trees_changed(), ["agent-auth"])
+
+    def test_two_sessions_committing_at_once_are_both_noticed(self):
+        auth = self.worktree("agent-auth")
+        api = self.worktree("agent-api")
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        self.commit("a", repo=auth)
+        self.commit("b", repo=api)
+        self.assertEqual(sorted(app.trees_changed()), ["agent-api", "agent-auth"])
+
+    def test_the_status_names_the_tree_and_how_much_arrived(self):
+        linked = self.worktree("agent-auth", commits=1)
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        self.commit("x", repo=linked)
+        self.commit("y", repo=linked)
+        app.refresh_overview(app.trees_changed())
+        self.assertIn("agent-auth +2", app.status)
+
+    def test_an_amend_elsewhere_reports_a_rewrite_not_an_arrival(self):
+        linked = self.worktree("agent-auth", commits=2)
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        (linked / "agent-auth-1.py").write_text("changed\n")
+        self.git("add", "-A", repo=linked)
+        self.git("-c", "user.email=t@e", "-c", "user.name=T",
+                 "commit", "-q", "--amend", "--no-edit", repo=linked)
+        app.refresh_overview(app.trees_changed())
+        self.assertIn("rewritten", app.status)
+
+    def test_a_reload_holds_the_column_where_you_left_it(self):
+        linked = self.worktree("agent-auth", commits=2)
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        app._last_grid_w = 40
+        app.move_column(-9)
+        self.commit("later", repo=linked)
+        app.refresh_overview(app.trees_changed())
+        self.assertEqual(app.column, 30)
+        self.assertFalse(app.column_at_tip)
+
+    def test_reload_picks_up_a_commit_from_another_session(self):
+        linked = self.worktree("agent-auth", commits=1)
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        before = len(next(r for r in app.trees if r.label == "agent-auth").timeline)
+        self.commit("landed-elsewhere", repo=linked)
+        app.refresh_overview()
+        after = len(next(r for r in app.trees if r.label == "agent-auth").timeline)
+        self.assertEqual((before, after), (1, 2))
+
+
+class TreeDrillInTest(TreeOverviewTest):
+    """Entering a tree from the overview and coming back up."""
+
+    def opened(self, repo=None, tree="agent-auth", column=None):
+        app = self.app_on(repo or self.repo)
+        app.enter_overview()
+        app._last_grid_w = 40
+        app.cursor = next(i for i, r in enumerate(app.trees) if r.label == tree)
+        if column is not None:
+            app.column, app.column_at_tip = column, False
+        app.open_selected_tree()
+        return app
+
+    def test_entering_a_tree_swaps_in_its_branch(self):
+        self.worktree("agent-auth", commits=3)
+        app = self.opened()
+        self.assertFalse(app.overview)
+        self.assertEqual(len(app.timeline), 3)
+        self.assertEqual(app.timeline.repo, self.root / "agent-auth")
+
+    def test_the_bridge_follows_the_tree_that_was_opened(self):
+        self.worktree("agent-auth", commits=3)
+        app = self.opened()
+        self.assertIs(app.bridge.timeline, app.timeline)
+        # Would raise off the end of the old branch, or on a closed cat-file.
+        app.bridge.open_state(app.selected.id, app.playhead)
+
+    def test_a_handoff_reads_the_opened_trees_files(self):
+        self.worktree("agent-auth", commits=2)
+        app = self.opened()
+        blob = app.timeline.file_at(app.selected.id, app.playhead)
+        self.assertIsNotNone(blob)
+
+    def test_entering_lands_on_the_column_that_was_selected(self):
+        self.worktree("agent-auth", commits=4)
+        app = self.opened(column=0)
+        self.assertEqual(app.playhead, 0)
+        self.assertFalse(app.follow)
+
+    def test_entering_at_the_tip_resumes_following(self):
+        self.worktree("agent-auth", commits=4)
+        app = self.opened()
+        self.assertEqual(app.playhead, len(app.timeline) - 1)
+        self.assertTrue(app.follow)
+
+    def test_the_other_rows_are_released_but_not_the_one_opened(self):
+        self.worktree("agent-auth", commits=2)
+        self.worktree("agent-api", commits=2)
+        app = self.app_on(self.repo)
+        app.enter_overview()
+        rows = {r.label: r.timeline for r in app.trees}
+        for timeline in rows.values():
+            timeline.file_at(next(iter(timeline.tracks)), 0)  # open every batch
+        app.cursor = next(i for i, r in enumerate(app.trees) if r.label == "agent-auth")
+        app.open_selected_tree()
+
+        self.assertIs(app.timeline, rows["agent-auth"])
+        self.assertIsNotNone(rows["agent-auth"]._batch, "the opened tree was closed")
+        self.assertIsNone(rows["agent-api"]._batch)
+        self.assertIsNone(rows["main"]._batch)
+
+    def test_reloading_after_entering_follows_the_new_tree(self):
+        linked = self.worktree("agent-auth", commits=2)
+        app = self.opened()
+        self.commit("later", repo=linked)
+        app.refresh()
+        self.assertEqual(len(app.timeline), 3)
+        self.assertEqual(app.timeline.repo, self.root / "agent-auth")
+
+    def test_going_back_up_puts_the_cursor_on_the_tree_just_left(self):
+        self.worktree("agent-auth", commits=2)
+        self.worktree("agent-api", commits=2)
+        app = self.opened(tree="agent-api")
+        app.enter_overview()
+        self.assertEqual(app.selected_tree.label, "agent-api")
+
+    def test_zoom_and_solo_do_not_survive_the_switch(self):
+        self.worktree("agent-auth", commits=2)
+        app = self.app_on(self.repo)
+        app.toggle_solo()
+        app.enter_overview()
+        app.cursor = next(i for i, r in enumerate(app.trees) if r.label == "agent-auth")
+        app.open_selected_tree()
+        self.assertIsNone(app.solo)
+        self.assertIsNone(app.zoom)
+
+    def test_the_watched_tip_switches_to_the_opened_tree(self):
+        linked = self.worktree("agent-auth", commits=2)
+        app = self.opened()
+        self.assertEqual(app.tip, watch.tip(linked))
+
+
+class TreeLaunchTest(TreeOverviewTest):
+    """Which view cvar opens on."""
+
+    def launched(self, repo, start_trees=None):
+        """The decision launch() makes, without taking over the terminal."""
+        timeline = Timeline.load(repo)
+        self.addCleanup(timeline.close)
+        app = ScrubApp(timeline, EditorBridge(timeline, "/nonexistent"))
+        self.addCleanup(app.leave_overview)
+        open_initial_view(app, start_trees)
+        return app
+
+    def test_one_worktree_opens_straight_onto_the_grid(self):
+        app = self.launched(self.repo)
+        self.assertFalse(app.overview)
+        self.assertEqual(app.status, "", "a lone worktree should say nothing")
+
+    def test_several_worktrees_open_on_the_overview(self):
+        self.worktree("agent-auth")
+        self.worktree("agent-api")
+        app = self.launched(self.repo)
+        self.assertTrue(app.overview)
+
+    def test_no_trees_opens_on_the_grid_regardless(self):
+        self.worktree("agent-auth")
+        app = self.launched(self.repo, start_trees=False)
+        self.assertFalse(app.overview)
+
+    def test_asking_for_trees_where_there_are_none_says_so(self):
+        app = self.launched(self.repo, start_trees=True)
+        self.assertFalse(app.overview)
+        self.assertIn("one worktree", app.status)
+
+
+class TreeOverviewRenderTest(unittest.TestCase):
+    """What the overview actually draws."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        root = Path(cls._tmp.name)
+        repo = root / "main"
+        repo.mkdir()
+
+        def git(*args, at=repo):
+            subprocess.run(["git", "-C", str(at), *args], check=True,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        def commit(message, at, lines):
+            (at / f"{message}.py").write_text("x\n" * lines)
+            git("add", "-A", at=at)
+            git("-c", "user.email=t@e", "-c", "user.name=T",
+                "commit", "-q", "-m", message, at=at)
+
+        git("init", "-q", "-b", "main")
+        commit("base", repo, 1)
+        for name, count, lines in (("agent-api", 6, 40), ("agent-docs", 1, 2)):
+            path = root / name
+            git("worktree", "add", "-q", "-b", name, str(path))
+            for n in range(count):
+                commit(f"{name}-{n}", path, lines)
+        cls.screen = _render(repo, rows=14, cols=92, overview=True)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def row(self, needle: str) -> str:
+        return next(line for line in self.screen if line.lstrip().startswith(needle))
+
+    def test_the_header_counts_trees_not_commits_of_one_branch(self):
+        self.assertIn("3 worktrees", self.screen[0])
+
+    def test_every_worktree_has_a_row(self):
+        for name in ("main", "agent-api", "agent-docs"):
+            self.row(name)
+
+    def test_a_row_names_its_branch(self):
+        self.assertIn("[agent-api]", self.row("agent-api"))
+
+    def test_the_tree_cvar_was_pointed_at_is_marked_in_text_not_colour(self):
+        self.assertIn("main*", self.row("main*"))
+
+    def test_every_row_is_drawn_to_the_same_width(self):
+        drawn = [len(self.row(n).rstrip()) for n in ("main*", "agent-api", "agent-docs")]
+        self.assertEqual(len(set(drawn)), 1, drawn)
+
+    def test_a_one_commit_branch_does_not_read_as_the_busiest(self):
+        """Summing churn per column made a short branch outweigh a long one."""
+        heavy = glyphs.UNICODE.ramp[-1]
+        self.assertNotIn(heavy, self.row("agent-docs"))
+        self.assertIn(heavy, self.row("agent-api"))
+
+    def test_the_detail_line_names_the_selected_tree_and_its_tip(self):
+        detail = next(line for line in self.screen if " commits · " in line and "files" in line)
+        self.assertIn("main", detail)
+        self.assertIn("this tree", detail)
+
+    def test_the_help_bar_names_the_way_back_down(self):
+        self.assertIn("w back", self.screen[-1])
+
+
 def _render(repo: Path, rows: int, cols: int, playhead: int | None = None,
-            default_pane: str = "diff", zoom_track: str | None = None) -> list[str]:
+            default_pane: str = "diff", zoom_track: str | None = None,
+            overview: bool = False, tree: str | None = None,
+            column: int | None = None) -> list[str]:
     """Draw one frame in a pty and return the window contents, line by line."""
     import fcntl
     import pickle
@@ -651,9 +1043,9 @@ def _render(repo: Path, rows: int, cols: int, playhead: int | None = None,
         import locale
 
         locale.setlocale(locale.LC_ALL, "")
-        from scrub.bridge import EditorBridge
-        from scrub.model import Timeline
-        from scrub.tui import ScrubApp, _init_colors
+        from cvar.bridge import EditorBridge
+        from cvar.model import Timeline
+        from cvar.tui import ScrubApp, _init_colors
 
         timeline = Timeline.load(repo)
         app = ScrubApp(timeline, EditorBridge(timeline, None), default_pane)
@@ -664,6 +1056,14 @@ def _render(repo: Path, rows: int, cols: int, playhead: int | None = None,
                 i for i, t in enumerate(app.tracks) if zoom_track in t.label
             )
             app.toggle_zoom()
+        if overview:
+            app.enter_overview()
+            if tree is not None:
+                app.cursor = next(
+                    i for i, r in enumerate(app.trees) if tree in r.label
+                )
+            if column is not None:
+                app.column, app.column_at_tip = column, False
 
         def draw_once(stdscr):
             _init_colors()
@@ -749,7 +1149,7 @@ class TtyProbeTest(unittest.TestCase):
 
         program = (
             f"import sys; sys.path.insert(0, {str(PROJECT)!r})\n"
-            "from scrub.bridge import nvim_sockets, socket_cwd\n"
+            "from cvar.bridge import nvim_sockets, socket_cwd\n"
             "import shutil\n"
             "found = [socket_cwd(s, shutil.which('nvim')) for s in nvim_sockets()]\n"
             "sys.stderr.write('ANSWER:' + repr([f for f in found if f]) + '\\n')\n"
@@ -799,7 +1199,7 @@ class CursesSmokeTest(unittest.TestCase):
         if pid == 0:  # child
             os.environ["TERM"] = "xterm-256color"
             os.chdir(PROJECT)
-            os.execv(sys.executable, [sys.executable, "-m", "scrub", str(self.repo)])
+            os.execv(sys.executable, [sys.executable, "-m", "cvar", str(self.repo)])
 
         time.sleep(1.2)  # let the timeline load and paint
         os.write(fd, keys)
@@ -823,9 +1223,82 @@ class CursesSmokeTest(unittest.TestCase):
         os.close(fd)
         self.assertEqual(os.waitstatus_to_exitcode(status), 0)
         text = output.decode(errors="replace")
-        self.assertIn("scrub", text)
+        self.assertIn("cvar", text)
         self.assertIn("authentication.py", text)
         self.assertIn("commit", text)
+
+
+class TreeSmokeTest(unittest.TestCase):
+    """Drive the overview end to end: open a tree, come back, quit."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        root = Path(cls._tmp.name)
+        cls.repo = build(root / "coding-experience")
+
+        def git(*args, at):
+            subprocess.run(["git", "-C", str(at), *args], check=True,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        git("checkout", "-q", "-B", "main", at=cls.repo)
+        for name in ("agent-auth", "agent-api"):
+            path = root / name
+            git("worktree", "add", "-q", "-b", name, str(path), "main", at=cls.repo)
+            (path / f"{name}.py").write_text("x\n" * 5)
+            git("add", "-A", at=path)
+            git("-c", "user.email=t@e", "-c", "user.name=T",
+                "commit", "-q", "-m", f"{name} work", at=path)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def drive(self, keys: bytes) -> str:
+        import pty
+
+        pid, fd = pty.fork()
+        if pid == 0:  # child
+            os.environ["TERM"] = "xterm-256color"
+            os.chdir(PROJECT)
+            os.execv(sys.executable, [sys.executable, "-m", "cvar", str(self.repo)])
+
+        time.sleep(1.5)  # three timelines to load and paint
+        os.write(fd, keys)
+        output = b""
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            done, status = os.waitpid(pid, os.WNOHANG)
+            try:
+                chunk = os.read(fd, 65536)
+            except OSError:
+                chunk = b""
+            output += chunk
+            if done:
+                break
+            time.sleep(0.1)
+        else:
+            os.kill(pid, 9)
+            os.waitpid(pid, 0)
+            self.fail("TUI did not exit on 'q'")
+        os.close(fd)
+        self.assertEqual(os.waitstatus_to_exitcode(status), 0)
+        return output.decode(errors="replace")
+
+    def test_a_multi_worktree_repo_opens_on_the_overview(self):
+        text = self.drive(b"q")
+        self.assertIn("worktrees", text)
+        self.assertIn("agent-auth", text)
+
+    def test_opening_a_tree_and_stepping_back_up_exits_cleanly(self):
+        # down, down, enter (open a tree), w (back up), q
+        text = self.drive(b"\x1b[B\x1b[B\r" + b"w" + b"q")
+        self.assertIn("worktrees", text)
+
+    def test_the_grid_is_reachable_through_a_tree(self):
+        # enter on the first row, then look for the file grid's own furniture
+        text = self.drive(b"\r" + b"q")
+        self.assertIn("tracks", text)
 
 
 class DefaultPaneTest(unittest.TestCase):
@@ -902,6 +1375,183 @@ class UnifiedDiffTest(unittest.TestCase):
 
     def test_a_line_past_the_end_does_not_crash(self):
         self.assertIsNone(bridge_mod._diff_line_for("@@ -1 +1 @@\n ctx\n", 9999))
+
+
+class UnifiedFallbackTest(BridgeTest):
+    """Enter on a commit that left the file alone still shows the file.
+
+    Most commits touch none of any given track, so an empty diff is the
+    ordinary case; refusing to open anything reads as the tool being broken.
+    """
+
+    def _untouched_index(self) -> int:
+        return next(
+            i for i in range(len(self.timeline))
+            if self.timeline.file_at(self.track.id, i) is not None
+            and not self.timeline.diff_at(self.track.id, i).strip()
+        )
+
+    def test_unchanged_commit_opens_the_file_instead(self):
+        index = self._untouched_index()
+        message = self.bridge.open_unified(self.track.id, index)
+        self.assertIn("unchanged here", message)
+        launch = self.wait_for_launch()[0]
+        self.assertIn("--goto", launch)
+        self.assertNotIn(".diff", launch)
+
+    def test_the_buffer_holds_the_file_not_a_diff(self):
+        index = self._untouched_index()
+        self.bridge.open_unified(self.track.id, index)
+        launch = self.wait_for_launch()[0]
+        opened = Path(launch.split()[-1].rsplit(":", 1)[0])
+        self.assertEqual(
+            opened.read_bytes(), self.timeline.file_at(self.track.id, index)
+        )
+
+    def test_a_commit_that_did_change_it_still_opens_a_diff(self):
+        touched = next(iter(sorted(self.track.clips)))
+        message = self.bridge.open_unified(self.track.id, touched)
+        self.assertNotIn("unchanged here", message)
+        self.assertIn(".diff", self.wait_for_launch()[0])
+
+    def test_absent_file_says_so_rather_than_opening_an_empty_buffer(self):
+        # A track the branch has not created yet: there is no diff *and*
+        # nothing to fall back to, so the honest answer is to say so.
+        track = next(
+            t for t in self.timeline.track_order() if "test_auth" in t.label
+        )
+        absent = next(
+            i for i in range(len(self.timeline))
+            if self.timeline.file_at(track.id, i) is None
+        )
+        message = self.bridge.open_unified(track.id, absent)
+        self.assertEqual(message, "file does not exist at this commit")
+        self.assertEqual(self.editor.launches(), [])
+
+
+class LiveFileTest(BridgeTest):
+    """`open_live` hands over the file in the repo, not a staged revision."""
+
+    def test_it_opens_the_path_inside_the_repo(self):
+        self.bridge.open_live(self.track.id, 3)
+        opened = Path(self.wait_for_launch()[0].split()[-1])
+        self.assertTrue(
+            opened.is_relative_to(Path(self.repo)),
+            f"{opened} is not in the working tree",
+        )
+
+    def test_it_is_the_working_copy_not_a_snapshot(self):
+        self.bridge.open_live(self.track.id, 0)
+        opened = Path(self.wait_for_launch()[0].split()[-1])
+        live = Path(self.repo) / self.track.label
+        self.assertEqual(opened, live)
+        self.assertEqual(opened.read_bytes(), live.read_bytes())
+
+    def test_the_path_is_the_one_at_the_tip_not_at_the_index(self):
+        # This track was renamed mid-branch; the working tree only has the
+        # newest name, so an old index must not resolve to the old path.
+        self.bridge.open_live(self.track.id, 0)
+        opened = Path(self.wait_for_launch()[0].split()[-1])
+        tip = len(self.timeline) - 1
+        self.assertEqual(opened.name, Path(self.track.path_at(tip)).name)
+
+    def test_a_file_not_in_the_working_tree_is_reported(self):
+        # The fixture deletes src/util.py before the tip, so it has a track but
+        # no file on disk — an empty buffer would be a worse answer than saying
+        # so.
+        deleted = next(
+            t for t in self.timeline.track_order() if "util" in t.label
+        )
+        tip = len(self.timeline) - 1
+        self.assertIsNone(self.timeline.file_at(deleted.id, tip))
+        message = self.bridge.open_live(deleted.id, tip)
+        self.assertIn("not in the working tree", message)
+        self.assertEqual(self.editor.launches(), [])
+
+    def test_the_message_says_editing_not_opened(self):
+        self.assertIn("editing", self.bridge.open_live(self.track.id, 3))
+        self.assertIn("opened", self.bridge.open_state(self.track.id, 3))
+
+
+class EditKeyTest(unittest.TestCase):
+    """`e` parks the playhead at the tip, then hands over the live file."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.repo = build(Path(cls._tmp.name) / "repo")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def setUp(self):
+        self.timeline = Timeline.load(self.repo)
+        self.addCleanup(self.timeline.close)
+        editor_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(editor_dir.cleanup)
+        self.editor = FakeEditor(Path(editor_dir.name))
+        self.bridge = EditorBridge(self.timeline, str(self.editor.path))
+        self.addCleanup(self.bridge.close)
+        self.app = ScrubApp(self.timeline, self.bridge)
+
+    def test_it_moves_the_playhead_to_the_tip(self):
+        self.app.playhead = 2
+        self.app.follow = False
+        self.app.edit_live()
+        self.assertEqual(self.app.playhead, len(self.timeline) - 1)
+
+    def test_it_re_arms_following(self):
+        self.app.playhead = 2
+        self.app.follow = False
+        self.app.edit_live()
+        self.assertTrue(self.app.follow)
+
+    def test_it_hands_over_a_file_in_the_repo(self):
+        self.app.playhead = 1
+        self.app.edit_live()
+        self.assertIn("editing", self.app.status)
+
+    def test_a_zoomed_region_is_rebuilt_at_the_tip(self):
+        # Zoom somewhere in the past, then edit: the chunks must be recomputed,
+        # or the handoff jumps to a line number from the old revision.
+        self.app.playhead = 3
+        self.app.toggle_zoom()
+        if self.app.zoom is None:
+            self.skipTest("selected track has no chunks at this commit")
+        before = list(self.app.chunks)
+        self.app.edit_live()
+        self.assertEqual(self.app.playhead, len(self.timeline) - 1)
+        self.assertIsNotNone(self.app.zoom)
+        self.assertNotEqual(before, self.app.chunks)
+
+    def test_the_zoomed_row_stays_selected_across_the_jump(self):
+        self.app.playhead = 3
+        self.app.toggle_zoom()
+        if self.app.zoom is None:
+            self.skipTest("selected track has no chunks at this commit")
+        zoomed = self.app.zoom
+        self.app.edit_live()
+        self.assertEqual(self.app.zoom, zoomed)
+        self.assertLess(self.app.cursor, max(len(self.app.chunks), 1))
+
+    def test_an_empty_timeline_does_not_crash(self):
+        self.app.timeline.tracks.clear()
+        self.app.edit_live()  # must simply do nothing
+
+
+class LiveEditableTest(unittest.TestCase):
+    """The editable flag has to survive into each transport."""
+
+    def test_lua_renders_booleans_not_integers(self):
+        rendered = bridge_mod._to_lua({"editable": True, "line": 1})
+        self.assertIn("editable = true", rendered)
+        self.assertIn("line = 1", rendered)
+        self.assertIn("editable = false", bridge_mod._to_lua({"editable": False}))
+
+    def test_the_lua_script_only_locks_buffers_it_was_told_to(self):
+        script = (PROJECT / "cvar" / "nvim_open.lua").read_text()
+        self.assertIn("if not request.editable then", script)
 
 
 class OrderTest(unittest.TestCase):
@@ -1025,6 +1675,9 @@ class LiveTest(unittest.TestCase):
         self.timeline = Timeline.load(self.repo)
         self.addCleanup(self.timeline.close)
         self.app = ScrubApp(self.timeline, EditorBridge(self.timeline, "/nonexistent"))
+        # refresh() replaces the timeline, so the one to close at the end is
+        # whichever the app is holding by then, not the one loaded here.
+        self.addCleanup(lambda: self.app.timeline.close())
 
     def git(self, *args):
         subprocess.run(["git", "-C", str(self.repo), *args],
@@ -1046,6 +1699,33 @@ class LiveTest(unittest.TestCase):
         before = watch.tip(self.repo)
         self.git("pack-refs", "--all")
         self.assertEqual(watch.tip(self.repo), before)
+
+    def test_tip_in_a_linked_worktree_reads_the_shared_ref(self):
+        """A worktree keeps branches in the common dir, not its own gitdir."""
+        linked = Path(self.tmp.name) / "linked"
+        self.git("branch", "-q", "side")
+        self.git("worktree", "add", "-q", str(linked), "side")
+
+        forks = []
+        real = watch._ask_git
+        watch._ask_git = lambda repo: (forks.append(repo), real(repo))[1]
+        try:
+            found = watch.tip(linked)
+        finally:
+            watch._ask_git = real
+
+        expected = subprocess.run(["git", "-C", str(linked), "rev-parse", "HEAD"],
+                                  capture_output=True, text=True).stdout.strip()
+        self.assertEqual(found, expected)
+        self.assertEqual(forks, [], "the worktree poll fell back to forking git")
+
+    def test_worktree_head_is_read_before_the_shared_one(self):
+        """Two worktrees on different branches must report different tips."""
+        linked = Path(self.tmp.name) / "other"
+        self.git("branch", "-q", "side")
+        self.git("worktree", "add", "-q", str(linked), "side")
+        self.commit("three")  # advances main only
+        self.assertNotEqual(watch.tip(self.repo), watch.tip(linked))
 
     def test_refresh_picks_up_a_new_commit(self):
         self.assertEqual(len(self.app.timeline), 2)
@@ -1085,6 +1765,25 @@ class LiveTest(unittest.TestCase):
         self.commit("three")
         self.app.refresh()
         self.assertEqual(self.app.selected.label, chosen)
+
+    def test_a_handoff_after_a_reload_reads_the_new_timeline(self):
+        """Another session committing must not leave the bridge on dead state."""
+        track = self.app.selected.id
+        self.commit("three")
+        self.app.refresh()
+        self.assertIs(self.app.bridge.timeline, self.app.timeline)
+        # Would raise IndexError off the end of the old commit list.
+        self.app.bridge.open_state(self.app.selected.id, self.app.playhead)
+
+    def test_a_handoff_after_an_amend_does_not_use_a_closed_batch(self):
+        self.app.timeline.file_at(self.app.selected.id, 0)  # force the batch open
+        (self.repo / "one.py").write_text("amended\n")
+        self.git("add", "-A")
+        self.git("-c", "user.email=t@e", "-c", "user.name=T",
+                 "commit", "-q", "--amend", "--no-edit")
+        self.app.refresh()
+        # Would raise ValueError: write to closed file.
+        self.app.bridge.open_state(self.app.selected.id, self.app.playhead)
 
     def test_a_broken_reload_reports_instead_of_raising(self):
         self.app.timeline._load_args = (Path("/nonexistent-repo"), None, None)

@@ -1,8 +1,8 @@
 """Inspect a timeline from the shell.
 
-    python -m scrub /path/to/repo
-    python -m scrub . --range main..HEAD
-    python -m scrub . --at 4 --track src/auth.py --pane state
+    python -m cvar /path/to/repo
+    python -m cvar . --range main..HEAD
+    python -m cvar . --at 4 --track src/auth.py --pane state
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from .model import Timeline
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="scrub", description="Scrub a commit timeline.")
+    parser = argparse.ArgumentParser(prog="cvar", description="Scrub a commit timeline.")
     parser.add_argument("repo", nargs="?", default=".", type=Path)
     parser.add_argument("--range", dest="rev_range", help="rev range, e.g. main..HEAD")
     parser.add_argument("-n", "--limit", type=int, help="cap the number of commits")
@@ -46,9 +46,9 @@ def main(argv: list[str] | None = None) -> int:
         "--open",
         dest="default_pane",
         choices=PANES,
-        default=os.environ.get("SCRUB_PANE", "unified"),
+        default=os.environ.get("CVAR_PANE", "unified"),
         help=(
-            "what enter opens (default: unified, or $SCRUB_PANE). "
+            "what enter opens (default: unified, or $CVAR_PANE). "
             "d/s/c still open each pane explicitly."
         ),
     )
@@ -62,6 +62,20 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="draw with plain ASCII, for fonts missing the block glyphs",
     )
+    trees_group = parser.add_mutually_exclusive_group()
+    trees_group.add_argument(
+        "--trees",
+        dest="trees",
+        action="store_true",
+        default=None,
+        help="start on the worktree overview (default when the repo has several)",
+    )
+    trees_group.add_argument(
+        "--no-trees",
+        dest="trees",
+        action="store_false",
+        help="start on the file grid even when the repo has several worktrees",
+    )
     parser.add_argument("--no-color", action="store_true")
     args = parser.parse_args(argv)
     if args.ascii:
@@ -74,7 +88,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         timeline = Timeline.load(args.repo, args.rev_range, args.limit)
     except GitError as exc:
-        print(f"scrub: {exc}", file=sys.stderr)
+        print(f"cvar: {exc}", file=sys.stderr)
         return 1
 
     with timeline:
@@ -83,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if not len(timeline):
-            print("scrub: no commits in range", file=sys.stderr)
+            print("cvar: no commits in range", file=sys.stderr)
             return 1
 
         playhead = len(timeline) - 1 if args.at is None else args.at
@@ -92,7 +106,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.track:
             track_id = _resolve_track(timeline, args.track)
             if track_id is None:
-                print(f"scrub: no track matching {args.track!r}", file=sys.stderr)
+                print(f"cvar: no track matching {args.track!r}", file=sys.stderr)
                 return 1
             print(_pane(timeline, track_id, playhead, args.pane))
             return 0
@@ -103,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
             print(render.grid(timeline, playhead, color=not args.no_color))
             return 0
 
-        tui.launch(timeline, args.editor, args.nvim_server, args.default_pane)
+        tui.launch(timeline, args.editor, args.nvim_server, args.default_pane, args.trees)
     return 0
 
 

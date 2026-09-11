@@ -113,7 +113,17 @@ class Timeline:
         self.commits = commits
         self.tracks = tracks
         self.base_sha = base_sha
-        self._cat = CatFileBatch(repo)
+        # Opened on the first blob read, not here. A timeline is often loaded
+        # only to be drawn — the trees overview loads one per worktree — and a
+        # `git cat-file` process per timeline that nothing ever reads from is
+        # pure cost.
+        self._batch: CatFileBatch | None = None
+
+    @property
+    def _cat(self) -> CatFileBatch:
+        if self._batch is None:
+            self._batch = CatFileBatch(self.repo)
+        return self._batch
 
     # -- construction ----------------------------------------------------
 
@@ -124,7 +134,7 @@ class Timeline:
             raise GitError(
                 f"{where} is not a git work tree.\n"
                 f"       There is no timeline without commits — run `git init` there, "
-                f"or point scrub at a repo: python3 -m scrub /path/to/repo"
+                f"or point cvar at a repo: python3 -m cvar /path/to/repo"
             )
 
         revs = gitio.resolve_range(repo, rev_range, limit)
@@ -258,7 +268,9 @@ class Timeline:
         )
 
     def close(self) -> None:
-        self._cat.close()
+        if self._batch is not None:
+            self._batch.close()
+            self._batch = None
 
     def __enter__(self) -> Timeline:
         return self

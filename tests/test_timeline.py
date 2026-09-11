@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from make_fixture import build  # noqa: E402
-from scrub.model import Timeline, _parse_name_status, _parse_numstat  # noqa: E402
+from cvar.model import Timeline, _parse_name_status, _parse_numstat  # noqa: E402
 
 
 class ParsingTest(unittest.TestCase):
@@ -120,6 +120,28 @@ class TimelineTest(unittest.TestCase):
     def test_clips_land_on_the_commits_that_touched_them(self):
         track = self.track("app.py")
         self.assertEqual(sorted(track.clips), [5])
+
+    def test_loading_a_timeline_forks_no_cat_file(self):
+        """The trees overview loads one timeline per worktree only to draw it."""
+        fresh = Timeline.load(self.repo)
+        try:
+            self.assertIsNone(fresh._batch)
+        finally:
+            fresh.close()
+
+    def test_the_first_blob_read_opens_the_batch(self):
+        fresh = Timeline.load(self.repo)
+        try:
+            track = next(t for t in fresh.track_order() if "app.py" in t.label)
+            self.assertIsNotNone(fresh.file_at(track.id, 5))
+            self.assertIsNotNone(fresh._batch)
+        finally:
+            fresh.close()
+
+    def test_closing_an_unread_timeline_is_harmless(self):
+        fresh = Timeline.load(self.repo)
+        fresh.close()
+        fresh.close()
 
 
 if __name__ == "__main__":

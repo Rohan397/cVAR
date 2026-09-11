@@ -1,4 +1,4 @@
-"""Explain which editor and transport scrub picked, and why.
+"""Explain which editor and transport cvar picked, and why.
 
 The handoff has several fallbacks and they are all silent — a diff opening in
 the wrong place looks like a bug when it is usually a mismatch between where
@@ -12,13 +12,14 @@ import shutil
 from pathlib import Path
 
 from . import bridge as _bridge
+from . import termfix
 from .bridge import EditorBridge, _relatedness, nvim_sockets, socket_cwd
 from .model import Timeline
 
 TRANSPORTS = {
     "gui": "diff opens in the running VS Code / Cursor window",
     "remote": "diff opens in the nvim already running in another pane",
-    "suspend": "scrub yields this terminal to nvim, and takes it back on :qa",
+    "suspend": "cvar yields this terminal to nvim, and takes it back on :qa",
     "none": "no editor available — nothing will open",
 }
 
@@ -27,12 +28,12 @@ def _why_editor(editor: str | None) -> str:
     if editor is None:
         return "nothing resolved"
     name = Path(editor).name
-    for var in ("SCRUB_EDITOR", "VISUAL", "EDITOR"):
+    for var in ("CVAR_EDITOR", "VISUAL", "EDITOR"):
         value = os.environ.get(var, "").split()
         if value and Path(shutil.which(value[0]) or value[0]).name == name:
             return f"from ${var}"
     if os.environ.get("NVIM"):
-        return "from $NVIM — scrub is running inside nvim's :terminal"
+        return "from $NVIM — cvar is running inside nvim's :terminal"
     if name in _bridge.VIM_FAMILY:
         return "a running nvim was found on this repo"
     return "found by scanning installed editors (no $EDITOR set)"
@@ -49,6 +50,16 @@ def report(timeline: Timeline, editor: str | None, server: str | None) -> str:
         ]
         if made.server:
             lines.append(f"nvim socket {made.server}")
+
+        # Reported on a copy: asking what would happen must not change what
+        # this process is running with.
+        blocked = termfix.disable_rep(dict(os.environ))
+        lines.append(
+            f"glyph runs  patched terminfo   [ncurses rep disabled, so long "
+            f"runs of one glyph survive]"
+            if blocked is None else
+            f"glyph runs  system terminfo    [{blocked}]"
+        )
 
         probe = shutil.which("nvim")
         lines += ["", "nvim sockets on this machine:"]

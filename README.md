@@ -8,7 +8,7 @@ consistent, well formatted, and occasionally wrong in ways a diff hides. cVAR
 is the review room: step through a branch commit by commit, see which files
 churned and when, and hand any frame to your editor to actually read.
 
-The command is `scrub`, because that is the verb.
+The command is `cvar`. Scrubbing is the verb; cVAR is the thing.
 
 Stdlib-only Python, no dependencies. Backend is git's plumbing layer.
 MIT licensed.
@@ -21,6 +21,7 @@ MIT licensed.
 | track | one logical file, followed across renames |
 | clip | one file's change at one commit |
 | playhead | the commit index currently in view |
+| sequence | one worktree — a whole branch, collapsed to one row |
 
 A **track is a file identity, not a path**. When a branch renames or moves a
 file, the track survives and `file_at()` transparently reads whichever path was
@@ -32,9 +33,10 @@ Following one file is *soloing a track*, not a separate mode.
 ## Try it
 
 ```sh
-python3 -m scrub /path/to/repo                # interactive scrubber
-python3 -m scrub . --range main..HEAD
-python3 -m scrub . --grid                     # print once and exit
+cvar /path/to/repo                # interactive scrubber
+cvar . --range main..HEAD
+cvar . --grid                     # print once and exit
+cvar . --no-trees                 # skip the worktree overview
 ```
 
 | key | |
@@ -44,9 +46,11 @@ python3 -m scrub . --grid                     # print once and exit
 | `[` `]` | jump to the previous/next commit that touched this track |
 | `g` `G` | jump to the start/end of the branch |
 | `f` | solo the selected track (following one file is soloing, not a mode) |
-| `⏎` | open this commit's diff in the editor |
+| `w` | step up to the worktrees, or back down |
+| `⏎` | open this commit's diff, or the file itself if it was untouched |
 | `s` | open the file as it exists at the playhead |
 | `c` | open the cumulative diff, base → playhead |
+| `e` | jump to the tip and open the real file, editable |
 | `q` | quit |
 
 The timeline stretches to fill the terminal, so a short branch spreads into
@@ -54,7 +58,7 @@ wide clips rather than huddling in the left corner. Only when commits outnumber
 columns does it fall back to one column each and scroll.
 
 ```
-scrub  4/8 commits · 4 tracks · 41 lines
+cvar  4/8 commits · 4 tracks · 41 lines
 
 src/authentication.py  ▓▓▓▓▓▓▓▓▓██████████·········░░░░░░░░░░██████████···················██████████
 tests/test_auth.py                        █████████·······································██████████
@@ -69,6 +73,48 @@ The bottom track is the commit under the playhead, given the whole width — a
 message sliced into per-commit cells is unreadable, and the one you are parked
 on is the one you want. `▼` in the ruler is what marks position instead, with
 the selected track's clip detail directly beneath.
+
+## Several sessions at once
+
+One agent per worktree is the layout this is built around, and a worktree is
+the closest thing git has to a session identity — discoverable and stable,
+unlike a running process. When a repo has more than one, cvar opens on the
+trees instead of the grid, because *which session* is then the first question:
+
+```
+cvar  4 worktrees · 19 commits · 351 lines
+
+coding-experience  [main]        ::::::::::::::::*****:::::·····*****::::::::::*****
+agent-api          [agent-api]   #################*****************#################
+agent-auth*        [agent-auth]  ###########**********##########::::::::::**********
+agent-docs         [agent-docs]  ***************************************************
+                                 ──────────────────────────────────────────────────▼
+agent-auth · 5 commits · 3 files · 157 lines · e00df21 tighten the clock skew window
+```
+
+`⏎` opens the selected tree's own grid, landing the playhead on the commit the
+column cursor was standing on — drill into a busy stretch and you arrive at
+that stretch, not at the tip. `w` steps back up. `*` marks the tree you are in.
+
+**Each row is its own branch, stretched to the full width.** Column 10 of one
+row and column 10 of another are unrelated commits: the trees are on different
+branches of different lengths and share no clock, so there is no honest way to
+put them on one axis. The ruler is unlabelled for that reason and the detail
+line names the actual commit under the cursor. A row is never scrolled — a
+branch showing only part of itself would make the shapes incomparable, which is
+the one thing they exist to be.
+
+**A column carries the churn of a typical commit in it, not the total.** Under
+a sum, a one-commit branch — whose single weight repeats across every stretched
+column — reads as heavier than a fifty-commit one, which is exactly backwards.
+
+Every tree is polled while the overview is up, not just the one you launched
+in, so work landing in another session shows up where it landed: the status bar
+says `agent-api +2`, and distinguishes an amend or rebase, where a tip moves
+without the count rising, from new commits.
+
+`--trees` and `--no-trees` override the choice of opening view in both
+directions.
 
 ## Colour
 
@@ -121,24 +167,24 @@ tooling and the one that needs no setup:
 
 ```sh
 export EDITOR=nvim
-python3 -m scrub /path/to/repo     # ⏎ opens nvim diff, :qa returns to the grid
+cvar /path/to/repo     # ⏎ opens nvim diff, :qa returns to the grid
 ```
 
 **`remote`** — nvim over RPC, for a persistent side-by-side. This is the mode
-for the two-pane layout: nvim in one terminal pane, scrub in another. **No
-setup and no flags** — nvim already listens on a socket by default, so scrub
+for the two-pane layout: nvim in one terminal pane, cvar in another. **No
+setup and no flags** — nvim already listens on a socket by default, so cvar
 finds the one editing this repo:
 
 ```sh
 nvim .                       # pane 1, exactly as you already start it
-python3 -m scrub .           # pane 2
+cvar .                       # pane 2
 ```
 
 Discovery globs `$TMPDIR/nvim.$USER/*/nvim.<pid>.0` and asks each live nvim for
 its `getcwd()`, then ranks by how closely that matches the repo. Ranking, not
 first-match: an nvim opened at `$HOME` is an ancestor of every project and
 would otherwise swallow handoffs meant for a nested one. Unrelated nvims are
-never candidates. `--nvim-server <path>` overrides; `$NVIM` is used when scrub
+never candidates. `--nvim-server <path>` overrides; `$NVIM` is used when cvar
 runs inside nvim's own `:terminal`.
 
 Each handoff reuses **one tab** rather than opening a new one — thirty presses
@@ -146,7 +192,7 @@ of `⏎` leave one diff tab, not thirty — and the rest of the layout is
 untouched. The split is `vertical rightbelow`, or the user's `splitright`
 setting would decide which revision lands where and silently invert the diff.
 
-The behavior lives in `scrub/nvim_open.lua`, rewritten with the current request
+The behavior lives in `cvar/nvim_open.lua`, rewritten with the current request
 and executed over RPC. A `--remote-send` keystroke string cannot reuse a tab,
 restore focus, or tell a terminal window from an editor one.
 
@@ -157,7 +203,7 @@ restore focus, or tell a terminal window from an editor one.
 
 Configuration beats evidence beats installed software:
 
-1. `$SCRUB_EDITOR`
+1. `$CVAR_EDITOR`
 2. `$NVIM` — you are inside nvim's `:terminal` already
 3. `$VISUAL` / `$EDITOR`
 4. **a live nvim editing this repo** — found by socket discovery
@@ -173,12 +219,28 @@ resolve is reported rather than silently substituted.
 
 Three views of the same track, all anchored to the playhead:
 
-- `diff` (`⏎`) — what this one commit did to the file.
+- `diff` (`⏎`) — what this one commit did to the file. Most commits leave
+  any given file alone, so when there is no change here it opens the file
+  at the playhead instead of refusing.
 - `state` (`s`) — the file as it exists at the playhead. The video-editor
   default: you see the frame, not the delta.
 - `cumulative` (`c`) — everything the branch did to this file from base to
   playhead. Usually the most useful for review, since it skips the churn where
   an agent wrote something and rewrote it three commits later.
+
+All three stage a copy of the revision under a temp path and open it read-only:
+they are for reading, and a buffer you can type into but never save is a trap.
+
+`e` is the exception, and the way out of the review room. It moves the playhead
+to the tip, then opens the **actual file in the working tree**, unlocked — so
+the thing you were reading becomes the thing you are editing without leaving
+the grid. The jump to the tip is not a convenience: the working tree is the
+newest revision, so editing against anything else would put the buffer and the
+timeline on different versions of the file. It also makes a zoomed region's
+line number mean the same thing in both, which is why `e` from a chunk lands on
+that chunk.
+
+A file the branch deleted says so rather than opening an empty buffer.
 
 ## Ranges
 
@@ -195,26 +257,30 @@ Measured on a 400-commit branch touching 41 files:
 | timeline load | ~180 ms (two `git log` passes, whole timeline) |
 | state pane | ~0.1 ms/frame (long-lived `git cat-file --batch`) |
 | diff pane | ~9 ms (forks `git diff-tree`) |
+| trees overview | ~75 ms for four worktrees, loaded in parallel |
+| watching four trees | ~0.9 ms/second (one ref read per tree, twice a second) |
 
 The state pane is the scrub path and is effectively free. The diff pane forks
 per request and is the thing to cache or prefetch when the TUI lands.
 
 ## Layout
 
-    scrub/gitio.py   plumbing wrappers, CatFileBatch, -z parsing
-    scrub/model.py   Commit, Clip, Track, Timeline
-    scrub/tui.py     the curses scrubber
-    scrub/bridge.py  editor handoff, nvim socket discovery
-    scrub/nvim_open.lua  what the RPC runs inside nvim
-    scrub/render.py  static ASCII grid for --grid and pipes
-    scrub/cli.py     python -m scrub
+    cvar/gitio.py   plumbing wrappers, CatFileBatch, -z parsing
+    cvar/model.py   Commit, Clip, Track, Timeline
+    cvar/trees.py   worktree discovery, one row per session
+    cvar/tui.py     the curses scrubber
+    cvar/bridge.py  editor handoff, nvim socket discovery
+    cvar/nvim_open.lua  what the RPC runs inside nvim
+    cvar/render.py  static ASCII grid for --grid and pipes
+    cvar/cli.py     the cvar entry point
     tests/           make_fixture.py builds an agent-shaped repo
 
 ## Tests
 
 ```sh
-python3 tests/test_timeline.py   # model, 15 tests
-python3 tests/test_tui.py        # navigation, layout, bridges, rendering, 59
+python3 tests/test_timeline.py   # model, 18 tests
+python3 tests/test_trees.py      # worktree discovery, column fitting, 24
+python3 tests/test_tui.py        # navigation, layout, bridges, rendering, 183
 ```
 
 `test_tui.py` uses a fake editor that records its argv rather than opening
